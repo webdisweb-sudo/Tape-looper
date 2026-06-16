@@ -71,7 +71,7 @@ input[type=range].ps::-webkit-slider-thumb{-webkit-appearance:none;width:14px;he
 #main-layout{flex:1;overflow:hidden;display:flex;flex-direction:column;z-index:1;min-height:0}
 
 /* PORTRAIT: tracks scroll */
-#scroll{flex:1;overflow-y:scroll;overflow-x:hidden;-webkit-overflow-scrolling:touch;padding:6px;display:flex;flex-direction:column;gap:5px}
+#scroll{flex:1;overflow:hidden;padding:6px;display:flex;flex-direction:column;gap:5px;touch-action:pan-y}
 #scroll::-webkit-scrollbar{width:4px}
 #scroll::-webkit-scrollbar-thumb{background:var(--border2);border-radius:2px}
 #scroll::-webkit-scrollbar-track{background:var(--bg)}
@@ -688,6 +688,45 @@ document.getElementById('btn-load-proj').addEventListener('click',loadProject);
 document.getElementById('btn-bounce').addEventListener('click',showBounce);
 
 dots();
+
+// JS touch scroll for Android WebView compatibility
+(function(){
+  const el = document.getElementById('scroll');
+  let startY = 0, startTop = 0, scrollTop = 0;
+  let maxScroll = 0;
+
+  function updateMax() {
+    maxScroll = el.scrollHeight - el.clientHeight;
+  }
+
+  el.addEventListener('touchstart', e => {
+    startY = e.touches[0].clientY;
+    startTop = scrollTop;
+    updateMax();
+  }, {passive: true});
+
+  el.addEventListener('touchmove', e => {
+    const dy = startY - e.touches[0].clientY;
+    scrollTop = Math.max(0, Math.min(maxScroll, startTop + dy));
+    el.style.transform = `translateY(-${scrollTop}px)`;
+    e.preventDefault();
+  }, {passive: false});
+
+  // Make el a scroll container with a wrapper
+  const wrapper = document.createElement('div');
+  wrapper.style.cssText = 'flex:1;overflow:hidden;position:relative;';
+  el.parentNode.insertBefore(wrapper, el);
+  wrapper.appendChild(el);
+  el.style.position = 'absolute';
+  el.style.top = '0';
+  el.style.left = '0';
+  el.style.right = '0';
+  el.style.bottom = 'auto';
+  el.style.minHeight = '100%';
+  el.style.overflow = 'visible';
+  el.style.transform = 'translateY(0)';
+})();
+
 </script>
 </body>
 </html>
