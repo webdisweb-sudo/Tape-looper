@@ -2,13 +2,12 @@ package com.tapelooper.app;
 
 import android.app.Activity;
 import android.content.Intent;
-import android.net.Uri;
-import android.os.Bundle;
-import android.webkit.*;
 import android.content.pm.PackageManager;
 import android.Manifest;
-import androidx.core.app.ActivityCompat;
-import androidx.core.content.ContextCompat;
+import android.net.Uri;
+import android.os.Build;
+import android.os.Bundle;
+import android.webkit.*;
 
 public class MainActivity extends Activity {
     WebView webView;
@@ -53,10 +52,8 @@ public class MainActivity extends Activity {
             }
         });
 
-        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO)
-                != PackageManager.PERMISSION_GRANTED) {
-            ActivityCompat.requestPermissions(this,
-                new String[]{Manifest.permission.RECORD_AUDIO}, MIC_REQ);
+        if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(new String[]{Manifest.permission.RECORD_AUDIO}, MIC_REQ);
         }
 
         webView.loadUrl("file:///android_asset/index.html");
