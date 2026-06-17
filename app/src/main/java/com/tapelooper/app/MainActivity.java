@@ -145,9 +145,9 @@ public class MainActivity extends Activity {
             webView.resumeTimers();
             // Reload if blank
             webView.evaluateJavascript(
-                "document.body && document.body.innerHTML.length > 0 ? 'ok' : 'blank'",
+                "document.body ? document.body.childElementCount : -1",
                 value -> {
-                    if (""blank"".equals(value)) {
+                    if ("0".equals(value) || "-1".equals(value)) {
                         webView.reload();
                     }
                 }
