@@ -138,8 +138,44 @@ public class MainActivity extends Activity {
     }
 
     @Override
+    protected void onResume() {
+        super.onResume();
+        if (webView != null) {
+            webView.onResume();
+            webView.resumeTimers();
+            // Reload if blank
+            webView.evaluateJavascript(
+                "document.body && document.body.innerHTML.length > 0 ? 'ok' : 'blank'",
+                value -> {
+                    if (""blank"".equals(value)) {
+                        webView.reload();
+                    }
+                }
+            );
+        }
+    }
+
+    @Override
+    protected void onPause() {
+        super.onPause();
+        if (webView != null) {
+            webView.onPause();
+            webView.pauseTimers();
+        }
+    }
+
+    @Override
+    protected void onDestroy() {
+        if (webView != null) {
+            webView.destroy();
+            webView = null;
+        }
+        super.onDestroy();
+    }
+
+    @Override
     public void onBackPressed() {
-        if (webView.canGoBack()) webView.goBack();
+        if (webView != null && webView.canGoBack()) webView.goBack();
         else super.onBackPressed();
     }
 }
