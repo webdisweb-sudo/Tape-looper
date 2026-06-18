@@ -725,11 +725,11 @@ function buildChain(t) {
   // FX sends (pre-fader post-EQ)
   eqHi.connect(sendTape);    sendTape.connect(tapeBus);
   eqHi.connect(sendSpring);  sendSpring.connect(springBus);
-  eqHi.connect(sendShimmer); sendShimmer.connect(plateBus);
+  eqHi.connect(sendPlate); sendPlate.connect(plateBus);
 
   t.chain = {
     inp:inpG, sat, fdr, panner, mg, an, ng, lp, lpDeg, hiShelf, loShelf,
-    driftD, wd1, wd2, wd3, makeSat, sendTape, sendSpring, sendShimmer,
+    driftD, wd1, wd2, wd3, makeSat, sendTape, sendSpring, sendPlate,
     setVol:      v => { fdr.gain.value = v; },
     setPan:      v => { panner.pan.value = v; },
     setMute:     m => { mg.gain.value = m ? 0 : 1; },
@@ -1505,11 +1505,11 @@ function buildChain(t) {
   // FX sends (pre-fader post-EQ)
   eqHi.connect(sendTape);    sendTape.connect(tapeBus);
   eqHi.connect(sendSpring);  sendSpring.connect(springBus);
-  eqHi.connect(sendShimmer); sendShimmer.connect(plateBus);
+  eqHi.connect(sendPlate); sendPlate.connect(plateBus);
 
   t.chain = {
     inp:inpG, sat, fdr, panner, mg, an, ng, lp, lpDeg, hiShelf, loShelf,
-    driftD, wd1, wd2, wd3, makeSat, sendTape, sendSpring, sendShimmer,
+    driftD, wd1, wd2, wd3, makeSat, sendTape, sendSpring, sendPlate,
     setVol:      v => { fdr.gain.value = v; },
     setPan:      v => { panner.pan.value = v; },
     setMute:     m => { mg.gain.value = m ? 0 : 1; },
