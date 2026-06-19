@@ -832,9 +832,7 @@ async function recStart(t) {
     mr.start(100); // collect every 100ms
     t.mr=mr; t.recording=true; renderCard(t); renderDetail(t); dots();
   } catch(e) {
-    alert('Микрофон недоступен: '+e.message+'
-
-Проверьте разрешения в настройках приложения.');
+    alert('Микрофон недоступен: '+e.message+'\n\nПроверьте разрешения в настройках приложения.');
   }
 }
 function recStop(t) { if(t.mr){t.mr.stop();t.mr=null;} }
@@ -1612,9 +1610,7 @@ async function recStart(t) {
     mr.start(100); // collect every 100ms
     t.mr=mr; t.recording=true; renderCard(t); renderDetail(t); dots();
   } catch(e) {
-    alert('Микрофон недоступен: '+e.message+'
-
-Проверьте разрешения в настройках приложения.');
+    alert('Микрофон недоступен: '+e.message+'\n\nПроверьте разрешения в настройках приложения.');
   }
 }
 function recStop(t) { if(t.mr){t.mr.stop();t.mr=null;} }
