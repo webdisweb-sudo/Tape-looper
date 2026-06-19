@@ -284,7 +284,7 @@ html,body{height:100%;width:100%;background:var(--bg);color:var(--txt);font-fami
 window.onerror = function(msg, url, line, col, error) {
   const d = document.createElement('div');
   d.style.cssText = 'position:fixed;top:0;left:0;right:0;background:#ff0000;color:#fff;padding:10px;font-size:11px;z-index:9999;white-space:pre-wrap;max-height:50vh;overflow:auto;font-family:monospace';
-  d.textContent = 'JS ERROR: ' + msg + '\nLine: ' + line + ':' + col + '\n' + (error && error.stack ? error.stack : '');
+  d.textContent = 'JS ERROR: ' + msg + '\n' + 'Line: ' + line + ':' + col + '\n' + (error && error.stack ? error.stack : '');
   document.body.appendChild(d);
   return false;
 };
@@ -332,7 +332,7 @@ function makeSlider(el, min, max, value, onChange, isBipolar) {
     e.preventDefault();
   }, {passive:false});
 
-  document.addEventListener('touchend', e => {
+  document.addEventListener('touchend', () => {
     if (activeSlider !== el) return;
     activeSlider = null; thumb.classList.remove('active');
   }, {passive:false});
@@ -346,23 +346,20 @@ function makeSlider(el, min, max, value, onChange, isBipolar) {
 }
 
 // ═══════════════════════════════════════════════════════════════
-//  AUDIO ENGINE
+//  AUDIO ENGINE STATE
 // ═══════════════════════════════════════════════════════════════
 const TC = ['#c87800','#227700','#0055cc','#881188','#886600','#7700cc','#007766','#cc2200'];
 const N = 8;
 let actx = null, masterGain = null, analL = null, analR = null;
 let globalLoop = false, currentTrack = null, projectName = 'untitled';
 
-// FX buses
 let tapeBus = null, springBus = null, plateBus = null;
-let tapeReturn = null, springReturn = null, shimmerReturn = null;
 let tapeProc = null, springProc = null, plateProc = null;
 
-// FX params
 const FX = {
-  tape:    { time:0.35, feedback:0.45, tone:0.6, wow:0.3, return:0.75 },
-  spring:  { decay:0.65, tone:0.55, diffusion:0.6, tension:0.5, predelay:0.01, return:0.75 },
-  plate:   { size:0.7, decay:0.6, damp:0.4, predelay:0.02, return:0.75 }
+  tape:   { time:0.35, feedback:0.45, tone:0.6, wow:0.3, return:0.75 },
+  spring: { decay:0.65, tone:0.55, diffusion:0.6, tension:0.5, predelay:0.01, return:0.75 },
+  plate:  { size:0.7, decay:0.6, damp:0.4, predelay:0.02, return:0.75 }
 };
 
 const T = Array.from({length:N}, (_, i) => ({
@@ -394,7 +391,9 @@ function ctx() {
   return actx;
 }
 
-// ─── TAPE DELAY FX ───────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════
+//  TAPE DELAY FX
+// ═══════════════════════════════════════════════════════════════
 function buildTapeDelay(c) {
   const input  = c.createGain();
   const output = c.createGain(); output.gain.value = FX.tape.return;
@@ -402,13 +401,11 @@ function buildTapeDelay(c) {
   const delay  = c.createDelay(4.0);
   delay.delayTime.value = FX.tape.time;
 
-  // Feedback path with LP (tape warmth on repeats)
   const fbGain = c.createGain(); fbGain.gain.value = FX.tape.feedback;
   const fbLP   = c.createBiquadFilter(); fbLP.type = 'lowpass';
   fbLP.frequency.value = 3000 + FX.tape.tone * 8000;
   const fbHP   = c.createBiquadFilter(); fbHP.type = 'highpass'; fbHP.frequency.value = 100;
 
-  // Wow on delay time (tape instability)
   const wowOsc = c.createOscillator(); wowOsc.frequency.value = 0.5 + Math.random()*0.3;
   const wowDepth = c.createGain(); wowDepth.gain.value = FX.tape.wow * 0.015;
   wowOsc.connect(wowDepth); wowDepth.connect(delay.delayTime); wowOsc.start();
@@ -416,7 +413,6 @@ function buildTapeDelay(c) {
   const flDepth = c.createGain(); flDepth.gain.value = FX.tape.wow * 0.002;
   flOsc.connect(flDepth); flDepth.connect(delay.delayTime); flOsc.start();
 
-  // Saturation on repeats
   const sat = c.createWaveShaper();
   const cv = new Float32Array(256);
   for (let i=0;i<256;i++){const x=(i*2)/256-1; cv[i]=Math.tanh(2*x)/Math.tanh(2);}
@@ -424,7 +420,7 @@ function buildTapeDelay(c) {
 
   input.connect(delay);
   delay.connect(fbHP); fbHP.connect(fbLP); fbLP.connect(sat);
-  sat.connect(fbGain); fbGain.connect(delay); // feedback loop
+  sat.connect(fbGain); fbGain.connect(delay);
   sat.connect(output);
   output.connect(masterGain);
 
@@ -438,16 +434,16 @@ function buildTapeDelay(c) {
   };
 }
 
-// ─── SPRING REVERB FX ────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════
+//  SPRING REVERB FX
+// ═══════════════════════════════════════════════════════════════
 function buildSpringReverb(c) {
   const input   = c.createGain(); input.gain.value = 1;
   const output  = c.createGain(); output.gain.value = FX.spring.return;
 
-  // Pre-delay
   const preDly  = c.createDelay(0.2); preDly.delayTime.value = FX.spring.predelay;
   input.connect(preDly);
 
-  // 6 comb filters — spring reverb body (Schroeder)
   const combData = [
     {t:0.02987, fb:0.855}, {t:0.03671, fb:0.841},
     {t:0.04110, fb:0.829}, {t:0.04373, fb:0.818},
@@ -470,7 +466,6 @@ function buildSpringReverb(c) {
     combLPs.push(lp);
   });
 
-  // 4-stage allpass diffusion
   const apTimes = [0.00476, 0.01084, 0.01699, 0.00894];
   const apGains = [0.61, 0.61, 0.61, 0.61];
   const apFBGs  = [];
@@ -478,16 +473,11 @@ function buildSpringReverb(c) {
   apTimes.forEach((t, i) => {
     const dly = c.createDelay(0.1); dly.delayTime.value = t * (0.5 + FX.spring.diffusion);
     const fbg = c.createGain(); fbg.gain.value = apGains[i];
-    const neg = c.createGain(); neg.gain.value = -apGains[i];
     apChain.connect(dly); dly.connect(fbg); fbg.connect(dly);
-    apChain.connect(neg);
-    // allpass output = input*(-g) + delay*(1-g²)
-    // simplified: just use delay output scaled
     apChain = fbg;
     apFBGs.push(fbg);
   });
 
-  // Spring tension: modulated delay (subtle pitch wobble on tail)
   const tensionLFO = c.createOscillator(); tensionLFO.frequency.value = 0.3 + FX.spring.tension * 2;
   const tensionD   = c.createGain(); tensionD.gain.value = FX.spring.tension * 0.003;
   const tensionDly = c.createDelay(0.05); tensionDly.delayTime.value = 0.01;
@@ -497,7 +487,6 @@ function buildSpringReverb(c) {
   tensionLFO.start(); tensionDC.start();
   apChain.connect(tensionDly);
 
-  // Spring boing: characteristic resonant spike
   const boing1 = c.createBiquadFilter(); boing1.type='bandpass'; boing1.frequency.value=420; boing1.Q.value=8;
   const boing2 = c.createBiquadFilter(); boing2.type='bandpass'; boing2.frequency.value=1100; boing2.Q.value=5;
   const boingG1 = c.createGain(); boingG1.gain.value=0.18;
@@ -505,7 +494,6 @@ function buildSpringReverb(c) {
   tensionDly.connect(boing1); boing1.connect(boingG1);
   tensionDly.connect(boing2); boing2.connect(boingG2);
 
-  // Output mix
   tensionDly.connect(output);
   boingG1.connect(output);
   boingG2.connect(output);
@@ -522,817 +510,16 @@ function buildSpringReverb(c) {
   };
 }
 
-// ─── PLATE REVERB FX ───────────────────────────────────────
-// Approach: harmonic shimmer via waveshaping + long reverb tail
-// No granular artifacts — uses spectral enrichment instead
-function buildShimmerReverb(c) {
-  const input  = c.createGain(); input.gain.value = 1;
-  const output = c.createGain(); output.gain.value = FX.plate.return;
-
-  // ── PRE-REVERB: dense early reflections ──────────────────────
-  const earlyMix = c.createGain(); earlyMix.gain.value = 0.2;
-  [0.0083,0.0127,0.0163,0.0211,0.0257,0.0309].forEach(t => {
-    const d = c.createDelay(0.1); d.delayTime.value = t;
-    input.connect(d); d.connect(earlyMix);
-  });
-
-  // ── HARMONIC EXCITER (shimmer source) ─────────────────────────
-  // Soft waveshaper generates upper harmonics (2nd, 3rd, 4th)
-  // This is what "shimmer" actually sounds like on Eventide H3000
-  const exciterLP = c.createBiquadFilter(); exciterLP.type='lowpass'; exciterLP.frequency.value=3000;
-  const exciterHP = c.createBiquadFilter(); exciterHP.type='highpass'; exciterHP.frequency.value=400;
-  const exciterWS = c.createWaveShaper();
-  function makeShimmerCurve(drive) {
-    const n = 1024; const cv = new Float32Array(n);
-    for (let i=0;i<n;i++) {
-      const x = (i*2)/(n-1) - 1;
-      // Asymmetric soft clip — generates even harmonics (octave-like)
-      cv[i] = x > 0
-        ? Math.tanh(drive * x * 1.5) / Math.tanh(drive * 1.5)
-        : Math.tanh(drive * x * 0.7) / Math.tanh(drive * 0.7);
-    }
-    return cv;
-  }
-  exciterWS.curve = makeShimmerCurve(2 + FX.plate.shimmer * 6);
-  exciterWS.oversample = '4x';
-  // Only pass harmonics (subtract dry from wet)
-  const exciterDry = c.createGain(); exciterDry.gain.value = -1;
-  const exciterWet = c.createGain(); exciterWet.gain.value = FX.plate.shimmer * 0.8;
-  const exciterSum = c.createGain(); exciterSum.gain.value = 1;
-
-  input.connect(exciterLP); exciterLP.connect(exciterHP);
-  exciterHP.connect(exciterWS);
-  exciterHP.connect(exciterDry); // phase-inverted dry
-  exciterWS.connect(exciterSum); exciterDry.connect(exciterSum);
-  exciterSum.connect(exciterWet);
-
-  // ── LONG REVERB TAIL ──────────────────────────────────────────
-  // 8 comb + 4 allpass, long decay for shimmer sustain
-  const revIn  = c.createGain(); revIn.gain.value = 1;
-  const revMix = c.createGain(); revMix.gain.value = 0.125;
-  const revLP  = c.createBiquadFilter(); revLP.type='lowpass';
-  revLP.frequency.value = 4000 + FX.plate.size * 8000;
-  const revHP  = c.createBiquadFilter(); revHP.type='highpass'; revHP.frequency.value=100;
-  const revFB  = c.createGain(); revFB.gain.value = Math.min(0.85, FX.plate.feedback);
-
-  const cTimes = [0.0297,0.0371,0.0411,0.0470,0.0514,0.0553,0.0626,0.0689];
-  const cFBGs  = [];
-  cTimes.forEach((t,i) => {
-    const sz = 0.6 + FX.plate.size * 0.7;
-    const d  = c.createDelay(0.8); d.delayTime.value = t * sz;
-    const fb = c.createGain(); fb.gain.value = 0.78 + i*0.01;
-    const lp = c.createBiquadFilter(); lp.type='lowpass'; lp.frequency.value=6000;
-    revIn.connect(d); d.connect(lp); lp.connect(fb); fb.connect(d);
-    lp.connect(revMix); cFBGs.push(fb);
-  });
-  revMix.connect(revLP); revLP.connect(revHP);
-
-  // 4 allpass diffusors
-  const apT = [0.00476,0.01084,0.01270,0.00894];
-  let apChain = revHP;
-  const apGs = [];
-  apT.forEach(t => {
-    const d = c.createDelay(0.1); d.delayTime.value = t*(0.5+FX.plate.size*0.5);
-    const g = c.createGain(); g.gain.value = 0.55;
-    apChain.connect(d); d.connect(g); apChain = g; apGs.push(g);
-  });
-
-  // Shimmer feedback: harmonics feed back into reverb
-  exciterWet.connect(revFB); revFB.connect(revIn);
-  // Also feed input into reverb
-  earlyMix.connect(revIn);
-  input.connect(revIn);
-
-  // Subtle chorus on reverb tail for shimmer movement
-  const chorusD = c.createDelay(0.05); chorusD.delayTime.value=0.02;
-  const chorusLFO = c.createOscillator(); chorusLFO.frequency.value=0.3+FX.plate.rate*1.5;
-  const chorusD2 = c.createGain(); chorusD2.gain.value=0.008+FX.plate.rate*0.01;
-  const chorusDC = c.createConstantSource(); chorusDC.offset.value=0.02;
-  chorusLFO.connect(chorusD2); chorusD2.connect(chorusD.delayTime);
-  chorusDC.connect(chorusD.delayTime);
-  chorusLFO.start(); chorusDC.start();
-  apChain.connect(chorusD);
-
-  // Shimmer HP to make it airy
-  const shimHP = c.createBiquadFilter(); shimHP.type='highshelf';
-  shimHP.frequency.value=2000; shimHP.gain.value=3;
-  chorusD.connect(shimHP);
-
-  // Output
-  shimHP.connect(output);
-  exciterWet.connect(output); // direct harmonic content
-  output.connect(masterGain);
-
-  return {
-    input, output, revFB, exciterWet, exciterWS, revLP, revHP,
-    chorusLFO, chorusD2, chorusDC, cFBGs, apGs, shimHP,
-    makeShimmerCurve,
-    setSize: v => {
-      FX.plate.size=v;
-      revLP.frequency.value=4000+v*8000;
-      cTimes.forEach((t,i)=>{ /* can't change delay time easily, affect fb */ });
-    },
-    setFeedback: v => { revFB.gain.value=Math.min(0.88,v); },
-    setShimmer:  v => {
-      exciterWet.gain.value=v*0.8;
-      exciterWS.curve=makeShimmerCurve(2+v*6);
-    },
-    setRate: v => {
-      chorusLFO.frequency.value=0.2+v*2;
-      chorusD2.gain.value=0.006+v*0.012;
-    },
-    setBlur: v => {
-      apGs.forEach(g=>{ g.gain.value=0.3+v*0.55; });
-      shimHP.gain.value=1+v*5;
-    },
-    setReturn: v => { output.gain.value=v; }
-  };
-}
-
-function initFX() {
-  const c = actx;
-  tapeProc   = buildTapeDelay(c);
-  springProc = buildSpringReverb(c);
-  plateProc = buildShimmerReverb(c);
-  tapeBus    = tapeProc.input;
-  springBus  = springProc.input;
-  plateBus = plateProc.input;
-}
-
-// ─── TRACK CHAIN ─────────────────────────────────────────────
-function buildChain(t) {
-  if (t.chain) return t.chain;
-  const c = ctx();
-
-  const inpG = c.createGain(); inpG.gain.value = t.inputGain * 2;
-  const sat  = c.createWaveShaper();
-  function makeSat(amt) {
-    const cv = new Float32Array(512);
-    for (let i=0;i<512;i++){const x=(i*2)/512-1; cv[i]=Math.tanh(amt*x)/Math.tanh(amt);}
-    return cv;
-  }
-  sat.curve = makeSat(2); sat.oversample = '4x';
-
-  // Tape hiss
-  const nb = c.createBuffer(1, c.sampleRate*4, c.sampleRate);
-  const nd = nb.getChannelData(0); for(let i=0;i<nd.length;i++) nd[i]=Math.random()*2-1;
-  const ns = c.createBufferSource(); ns.buffer=nb; ns.loop=true;
-  const nfHp = c.createBiquadFilter(); nfHp.type='highpass'; nfHp.frequency.value=1200;
-  const nfLp = c.createBiquadFilter(); nfLp.type='lowpass'; nfLp.frequency.value=7000;
-  const ng = c.createGain(); ng.gain.value = t.noise*0.022;
-  ns.connect(nfHp); nfHp.connect(nfLp); nfLp.connect(ng); ns.start();
-
-  const hp = c.createBiquadFilter(); hp.type='highpass'; hp.frequency.value=80;
-  const lp = c.createBiquadFilter(); lp.type='lowpass'; lp.frequency.value=1000+t.bw*12000;
-  const lpDeg = c.createBiquadFilter(); lpDeg.type='lowpass'; lpDeg.frequency.value=22000;
-  const hiShelf = c.createBiquadFilter(); hiShelf.type='highshelf'; hiShelf.frequency.value=4000; hiShelf.gain.value=0;
-  const loShelf = c.createBiquadFilter(); loShelf.type='lowshelf'; loShelf.frequency.value=200; loShelf.gain.value=0;
-
-  const driftLFO = c.createOscillator(); driftLFO.type='sine'; driftLFO.frequency.value=0.07;
-  const driftD = c.createGain(); driftD.gain.value=0;
-  const driftDC = c.createConstantSource(); driftDC.offset.value=1;
-  const driftMix = c.createGain(); driftMix.gain.value=1;
-  driftLFO.connect(driftD); driftD.connect(driftMix.gain);
-  driftDC.connect(driftMix.gain);
-  driftLFO.start(); driftDC.start();
-
-  const dl = c.createDelay(0.3); dl.delayTime.value=0.005;
-  const w1=c.createOscillator(); w1.frequency.value=0.6+Math.random()*0.5;
-  const wd1=c.createGain(); wd1.gain.value=0;
-  w1.connect(wd1); wd1.connect(dl.delayTime); w1.start();
-  const w2=c.createOscillator(); w2.frequency.value=5+Math.random()*2;
-  const wd2=c.createGain(); wd2.gain.value=0;
-  w2.connect(wd2); wd2.connect(dl.delayTime); w2.start();
-  const w3=c.createOscillator(); w3.frequency.value=0.07+Math.random()*0.08;
-  const wd3=c.createGain(); wd3.gain.value=0;
-  w3.connect(wd3); wd3.connect(dl.delayTime); w3.start();
-
-  const eqLo=c.createBiquadFilter(); eqLo.type='lowshelf'; eqLo.frequency.value=120;
-  const eqLM=c.createBiquadFilter(); eqLM.type='peaking'; eqLM.frequency.value=500; eqLM.Q.value=1.2;
-  const eqHM=c.createBiquadFilter(); eqHM.type='peaking'; eqHM.frequency.value=3000; eqHM.Q.value=1.2;
-  const eqHi=c.createBiquadFilter(); eqHi.type='highshelf'; eqHi.frequency.value=10000;
-
-  const fdr=c.createGain(); fdr.gain.value=t.vol;
-  const panner=c.createStereoPanner(); panner.pan.value=t.pan;
-  const mg=c.createGain(); mg.gain.value=1;
-  const an=c.createAnalyser(); an.fftSize=256;
-
-  // FX sends
-  const sendTape    = c.createGain(); sendTape.gain.value    = t.sends.tape;
-  const sendSpring  = c.createGain(); sendSpring.gain.value  = t.sends.spring;
-  const sendPlate   = c.createGain(); sendPlate.gain.value   = t.sends.plate;
-
-  // Signal path
-  inpG.connect(sat); sat.connect(hp); hp.connect(lp); lp.connect(dl);
-  dl.connect(lpDeg); lpDeg.connect(hiShelf); hiShelf.connect(loShelf);
-  loShelf.connect(driftMix); driftMix.connect(eqLo);
-  eqLo.connect(eqLM); eqLM.connect(eqHM); eqHM.connect(eqHi);
-  eqHi.connect(fdr); fdr.connect(panner); panner.connect(mg);
-  ng.connect(mg);
-  mg.connect(an); an.connect(masterGain);
-
-  // FX sends (pre-fader post-EQ)
-  eqHi.connect(sendTape);    sendTape.connect(tapeBus);
-  eqHi.connect(sendSpring);  sendSpring.connect(springBus);
-  eqHi.connect(sendPlate); sendPlate.connect(plateBus);
-
-  t.chain = {
-    inp:inpG, sat, fdr, panner, mg, an, ng, lp, lpDeg, hiShelf, loShelf,
-    driftD, wd1, wd2, wd3, makeSat, sendTape, sendSpring, sendPlate,
-    setVol:      v => { fdr.gain.value = v; },
-    setPan:      v => { panner.pan.value = v; },
-    setMute:     m => { mg.gain.value = m ? 0 : 1; },
-    setInputGain:v => { inpG.gain.value = v*2; sat.curve = makeSat(1+v*4); },
-    setNoise:    v => { ng.gain.value = v*0.022; },
-    setWow:      v => { const b=v*v; wd1.gain.value=b*0.055; wd2.gain.value=b*0.010; wd3.gain.value=b*0.035; },
-    setDegrade:  v => { lpDeg.frequency.value=22000-v*20000; hiShelf.gain.value=-v*14; loShelf.gain.value=v*4; driftD.gain.value=v*0.12; ng.gain.value=(t.noise+v*0.25)*0.022; sat.curve=makeSat(1+t.inputGain*4+v*3); },
-    setBW:       v => { lp.frequency.value = 1000+v*12000; },
-    setEQ: (b,v) => { if(b==='lo') eqLo.gain.value=v; else if(b==='lmid') eqLM.gain.value=v; else if(b==='hmid') eqHM.gain.value=v; else if(b==='hi') eqHi.gain.value=v; },
-    setSend: (fx,v) => {
-      if(fx==='tape')    sendTape.gain.value=v;
-      else if(fx==='spring')  sendSpring.gain.value=v;
-      else if(fx==='plate')   sendPlate.gain.value=v;
-    }
-  };
-  return t.chain;
-}
-
-function soloOn() { return T.some(t => t.solo); }
-function updateMutes() { const s=soloOn(); T.forEach(t=>{if(t.chain) t.chain.setMute(t.mute||(s&&!t.solo));}); }
-
-function applyGlobalTape() {
-  T.forEach(t => {
-    t.noise=G.noise; t.wow=G.wow; t.degrade=G.degrade; t.bw=G.bw;
-    if (t.chain) { t.chain.setNoise(G.noise); t.chain.setWow(G.wow); t.chain.setDegrade(G.degrade); t.chain.setBW(G.bw); }
-  });
-}
-
-function playT(t) {
-  if (!t.buf) return;
-  stopT(t);
-  const ch = buildChain(t);
-  ch.setVol(t.vol); ch.setInputGain(t.inputGain); ch.setPan(t.pan);
-  ch.setNoise(t.noise); ch.setWow(t.wow); ch.setDegrade(t.degrade); ch.setBW(t.bw);
-  ['lo','lmid','hmid','hi'].forEach(b => ch.setEQ(b, t.eq[b]));
-  ['tape','spring','plate'].forEach(fx => ch.setSend(fx, t.sends[fx]));
-  updateMutes();
-  const s = ctx().createBufferSource();
-  s.buffer=t.buf; s.playbackRate.value=t.speed; s.loop=t.loop||globalLoop;
-  s.connect(ch.inp); s._dead=false;
-  s.onended = () => { if(!s._dead){t.playing=false;renderCard(t);renderDetail(t);dots();} };
-  s.start(); t.src=s; t.playing=true; renderCard(t); renderDetail(t); dots();
-}
-
-function stopT(t) {
-  if (t.src) { t.src._dead=true; try{t.src.stop();}catch(e){} t.src=null; }
-  t.playing=false; renderCard(t); renderDetail(t); dots();
-}
-
-async function recStart(t) {
-  // Init AudioContext first (requires user gesture)
-  ctx();
-  if (actx.state === 'suspended') await actx.resume();
-  try {
-    // Request mic with fallback constraints
-    let stream;
-    try {
-      stream = await navigator.mediaDevices.getUserMedia({
-        audio:{echoCancellation:false, noiseSuppression:false, autoGainControl:false},
-        video:false
-      });
-    } catch(e1) {
-      // Fallback: try with default constraints
-      stream = await navigator.mediaDevices.getUserMedia({audio:true, video:false});
-    }
-    // Pick best available codec
-    const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
-      ? 'audio/webm;codecs=opus'
-      : MediaRecorder.isTypeSupported('audio/webm')
-      ? 'audio/webm'
-      : MediaRecorder.isTypeSupported('audio/ogg')
-      ? 'audio/ogg'
-      : '';
-    const mr = new MediaRecorder(stream, mimeType ? {mimeType} : {});
-    t.chunks = [];
-    mr.ondataavailable = e => { if(e.data.size>0) t.chunks.push(e.data); };
-    mr.onstop = async () => {
-      stream.getTracks().forEach(s=>s.stop());
-      try {
-        const blob = new Blob(t.chunks, {type: mr.mimeType || 'audio/webm'});
-        const ab   = await blob.arrayBuffer();
-        t.buf  = await actx.decodeAudioData(ab);
-        t.name = 'mic-'+(t.i+1);
-      } catch(e) {
-        console.error('Decode error:', e);
-        t.name = 'decode-err';
-        alert('Ошибка декодирования: '+e.message);
-      }
-      t.recording=false; renderCard(t); renderDetail(t); dots();
-    };
-    mr.start(100); // collect every 100ms
-    t.mr=mr; t.recording=true; renderCard(t); renderDetail(t); dots();
-  } catch(e) {
-    alert('Микрофон недоступен: '+e.message+'\n\nПроверьте разрешения в настройках приложения.');
-  }
-}
-function recStop(t) { if(t.mr){t.mr.stop();t.mr=null;} }
-
 // ═══════════════════════════════════════════════════════════════
-//  FX PANEL
+//  PLATE REVERB FX (Dattorro-inspired figure-8)
 // ═══════════════════════════════════════════════════════════════
-let currentFX = null;
-
-function openFX(type) {
-  currentFX = type;
-  const titles = {tape:'TAPE DELAY', spring:'SPRING REVERB', shimmer:'PLATE REVERB'};
-  const colors  = {tape:'var(--amber2)', spring:'var(--teal)', shimmer:'var(--teal)'};
-  document.getElementById('fx-title').textContent = titles[type];
-  document.getElementById('fx-title').style.color = colors[type];
-  buildFXPanel(type);
-  document.getElementById('fx-panel').className = 'show';
-}
-function closeFX() { document.getElementById('fx-panel').className = ''; currentFX = null; }
-
-function buildFXPanel(type) {
-  const inner = document.getElementById('fx-inner');
-  inner.innerHTML = '';
-  const sec = document.createElement('div'); sec.className = 'dsec';
-
-  if (type === 'tape') {
-    sec.innerHTML = `<div class="dsec-title">TAPE DELAY PARAMETERS</div>
-    <div class="drow"><span class="dlbl">DELAY TIME</span><div class="cslider" id="fxp-time"><div class="cslider-track"></div><div class="cslider-fill tape"></div><div class="cslider-thumb"></div></div><span class="dval" id="fxv-time">${FX.tape.time.toFixed(2)}s</span></div>
-    <div class="drow"><span class="dlbl">FEEDBACK</span><div class="cslider" id="fxp-fb"><div class="cslider-track"></div><div class="cslider-fill tape"></div><div class="cslider-thumb"></div></div><span class="dval" id="fxv-fb">${Math.round(FX.tape.feedback*100)}%</span></div>
-    <div class="drow"><span class="dlbl">TONE</span><div class="cslider" id="fxp-tone"><div class="cslider-track"></div><div class="cslider-fill tape"></div><div class="cslider-thumb"></div></div><span class="dval" id="fxv-tone">${Math.round(FX.tape.tone*100)}%</span></div>
-    <div class="drow"><span class="dlbl">WOW</span><div class="cslider" id="fxp-wow"><div class="cslider-track"></div><div class="cslider-fill tape"></div><div class="cslider-thumb"></div></div><span class="dval" id="fxv-wow">${Math.round(FX.tape.wow*100)}%</span></div>`;
-    inner.appendChild(sec);
-    requestAnimationFrame(() => {
-      makeSlider(document.getElementById('fxp-time'), 0.05, 2.0, FX.tape.time, v => { FX.tape.time=v; if(tapeProc) tapeProc.setTime(v); document.getElementById('fxv-time').textContent=v.toFixed(2)+'s'; });
-      makeSlider(document.getElementById('fxp-fb'),   0, 0.95, FX.tape.feedback, v => { FX.tape.feedback=v; if(tapeProc) tapeProc.setFeedback(v); document.getElementById('fxv-fb').textContent=Math.round(v*100)+'%'; });
-      makeSlider(document.getElementById('fxp-tone'), 0, 1, FX.tape.tone, v => { FX.tape.tone=v; if(tapeProc) tapeProc.setTone(v); document.getElementById('fxv-tone').textContent=Math.round(v*100)+'%'; });
-      makeSlider(document.getElementById('fxp-wow'),  0, 1, FX.tape.wow, v => { FX.tape.wow=v; if(tapeProc) tapeProc.setWow(v); document.getElementById('fxv-wow').textContent=Math.round(v*100)+'%'; });
-    });
-  } else if (type === 'spring') {
-    sec.innerHTML = `<div class="dsec-title">SPRING REVERB PARAMETERS</div>
-    <div class="drow"><span class="dlbl">DECAY</span><div class="cslider" id="fxp-dec"><div class="cslider-track"></div><div class="cslider-fill spring"></div><div class="cslider-thumb"></div></div><span class="dval" id="fxv-dec">${Math.round(FX.spring.decay*100)}%</span></div>
-    <div class="drow"><span class="dlbl">TONE</span><div class="cslider" id="fxp-ston"><div class="cslider-track"></div><div class="cslider-fill spring"></div><div class="cslider-thumb"></div></div><span class="dval" id="fxv-ston">${Math.round(FX.spring.tone*100)}%</span></div>
-    <div class="drow"><span class="dlbl">DIFFUSION</span><div class="cslider" id="fxp-sdif"><div class="cslider-track"></div><div class="cslider-fill spring"></div><div class="cslider-thumb"></div></div><span class="dval" id="fxv-sdif">${Math.round(FX.spring.diffusion*100)}%</span></div>
-    <div class="drow"><span class="dlbl">TENSION</span><div class="cslider" id="fxp-sten"><div class="cslider-track"></div><div class="cslider-fill spring"></div><div class="cslider-thumb"></div></div><span class="dval" id="fxv-sten">${Math.round(FX.spring.tension*100)}%</span></div>
-    <div class="drow"><span class="dlbl">PRE-DELAY</span><div class="cslider" id="fxp-spre"><div class="cslider-track"></div><div class="cslider-fill spring"></div><div class="cslider-thumb"></div></div><span class="dval" id="fxv-spre">${Math.round(FX.spring.predelay*1000)}ms</span></div>`;
-    inner.appendChild(sec);
-    requestAnimationFrame(() => {
-      makeSlider(document.getElementById('fxp-dec'),  0, 0.95, FX.spring.decay,     v => { FX.spring.decay=v;      if(springProc) springProc.setDecay(v);     document.getElementById('fxv-dec').textContent=Math.round(v*100)+'%'; });
-      makeSlider(document.getElementById('fxp-ston'), 0, 1,    FX.spring.tone,      v => { FX.spring.tone=v;       if(springProc) springProc.setTone(v);      document.getElementById('fxv-ston').textContent=Math.round(v*100)+'%'; });
-      makeSlider(document.getElementById('fxp-sdif'), 0, 1,    FX.spring.diffusion, v => { FX.spring.diffusion=v;  if(springProc) springProc.setDiffusion(v); document.getElementById('fxv-sdif').textContent=Math.round(v*100)+'%'; });
-      makeSlider(document.getElementById('fxp-sten'), 0, 1,    FX.spring.tension,   v => { FX.spring.tension=v;    if(springProc) springProc.setTension(v);   document.getElementById('fxv-sten').textContent=Math.round(v*100)+'%'; });
-      makeSlider(document.getElementById('fxp-spre'), 0, 0.1,  FX.spring.predelay,  v => { FX.spring.predelay=v;   if(springProc) springProc.setPreDelay(v);  document.getElementById('fxv-spre').textContent=Math.round(v*1000)+'ms'; });
-    });
-  } else {
-    sec.innerHTML = `<div class="dsec-title">PLATE REVERB PARAMETERS</div>
-    <div class="drow"><span class="dlbl">SIZE</span><div class="cslider" id="fxp-sz"><div class="cslider-track"></div><div class="cslider-fill plate"></div><div class="cslider-thumb"></div></div><span class="dval" id="fxv-sz">${Math.round(FX.plate.size*100)}%</span></div>
-    <div class="drow"><span class="dlbl">FEEDBACK</span><div class="cslider" id="fxp-shfb"><div class="cslider-track"></div><div class="cslider-fill plate"></div><div class="cslider-thumb"></div></div><span class="dval" id="fxv-shfb">${Math.round(FX.plate.feedback*100)}%</span></div>
-    <div class="drow"><span class="dlbl">PLATE</span><div class="cslider" id="fxp-shim"><div class="cslider-track"></div><div class="cslider-fill plate"></div><div class="cslider-thumb"></div></div><span class="dval" id="fxv-shim">${Math.round(FX.plate.shimmer*100)}%</span></div>
-    <div class="drow"><span class="dlbl">RATE</span><div class="cslider" id="fxp-shr"><div class="cslider-track"></div><div class="cslider-fill plate"></div><div class="cslider-thumb"></div></div><span class="dval" id="fxv-shr">${Math.round(FX.plate.rate*100)}%</span></div>
-    <div class="drow"><span class="dlbl">BLUR</span><div class="cslider" id="fxp-shbl"><div class="cslider-track"></div><div class="cslider-fill plate"></div><div class="cslider-thumb"></div></div><span class="dval" id="fxv-shbl">${Math.round(FX.plate.blur*100)}%</span></div>`;
-    inner.appendChild(sec);
-    requestAnimationFrame(() => {
-      makeSlider(document.getElementById('fxp-sz'),   0, 1,    FX.plate.size,     v => { FX.plate.size=v;     if(plateProc) plateProc.setSize(v);     document.getElementById('fxv-sz').textContent=Math.round(v*100)+'%'; });
-      makeSlider(document.getElementById('fxp-shfb'), 0, 0.88, FX.plate.feedback, v => { FX.plate.feedback=v; if(plateProc) plateProc.setFeedback(v); document.getElementById('fxv-shfb').textContent=Math.round(v*100)+'%'; });
-      makeSlider(document.getElementById('fxp-shim'), 0, 1,    FX.plate.shimmer,  v => { FX.plate.shimmer=v;  if(plateProc) plateProc.setShimmer(v);  document.getElementById('fxv-shim').textContent=Math.round(v*100)+'%'; });
-      makeSlider(document.getElementById('fxp-shr'),  0, 1,    FX.plate.rate,     v => { FX.plate.rate=v;     if(plateProc) plateProc.setRate(v);     document.getElementById('fxv-shr').textContent=Math.round(v*100)+'%'; });
-      makeSlider(document.getElementById('fxp-shbl'), 0, 1,    FX.plate.blur,     v => { FX.plate.blur=v;     if(plateProc) plateProc.setBlur(v);     document.getElementById('fxv-shbl').textContent=Math.round(v*100)+'%'; });
-    });
-  }
-  initFXScroll();
-}
-
-// ═══════════════════════════════════════════════════════════════
-//  BOUNCE
-// ═══════════════════════════════════════════════════════════════
-function showBounce() { document.getElementById('bounce-overlay').className='bounce-overlay show'; document.getElementById('bp-bar').style.display='none'; document.getElementById('bp-status').textContent=''; }
-function closeBounce() { document.getElementById('bounce-overlay').className='bounce-overlay'; }
-
-async function toBase64(blob) {
-  return new Promise((res,rej) => { const r=new FileReader(); r.onload=()=>res(r.result.split(',')[1]); r.onerror=rej; r.readAsDataURL(blob); });
-}
-async function saveToDevice(b64, subDir, fileName) {
-  if (window.AndroidFS) return window.AndroidFS.saveFile(b64, subDir, fileName);
-  const a=document.createElement('a'); a.href='data:application/octet-stream;base64,'+b64; a.download=fileName;
-  document.body.appendChild(a); a.click(); document.body.removeChild(a);
-  return 'OK:'+fileName;
-}
-
-async function bounceStart(mode) {
-  const tracks = T.filter(t => t.buf);
-  if (!tracks.length) { alert('Нет треков'); return; }
-  document.getElementById('bp-bar').style.display='block';
-  document.getElementById('bp-fill').style.width='0%';
-  document.getElementById('bp-status').textContent='Рендеринг...';
-  const SR=44100;
-  let maxDur=0; tracks.forEach(t=>{maxDur=Math.max(maxDur,t.buf.duration/t.speed);}); maxDur=Math.min(maxDur,300);
-  const expDir='Export/'+projectName;
-
-  if (mode==='stereo') {
-    const oc=new OfflineAudioContext(2,Math.ceil(maxDur*SR),SR);
-    const og=oc.createGain(); og.gain.value=0.85; og.connect(oc.destination);
-    const sa=soloOn();
-    tracks.forEach(t=>{
-      if(t.mute||(sa&&!t.solo)) return;
-      const src=oc.createBufferSource(); src.buffer=t.buf; src.playbackRate.value=t.speed;
-      const lp=oc.createBiquadFilter(); lp.type='lowpass'; lp.frequency.value=1000+t.bw*12000;
-      const pan=oc.createStereoPanner(); pan.pan.value=t.pan;
-      const g=oc.createGain(); g.gain.value=t.vol;
-      src.connect(lp); lp.connect(pan); pan.connect(g); g.connect(og); src.start(0);
-    });
-    document.getElementById('bp-fill').style.width='40%';
-    const buf=await oc.startRendering();
-    document.getElementById('bp-fill').style.width='80%';
-    const b64=await toBase64(bufferToWav(buf));
-    const fname=projectName+'-mix.wav';
-    const r=await saveToDevice(b64,expDir,fname);
-    document.getElementById('bp-fill').style.width='100%';
-    document.getElementById('bp-status').textContent=r.startsWith('OK:')?'✓ Download/TapeLooper/'+expDir+'/'+fname:'✓ '+r;
-  } else {
-    for(let i=0;i<tracks.length;i++){
-      const t=tracks[i];
-      document.getElementById('bp-fill').style.width=Math.round(i/tracks.length*100)+'%';
-      document.getElementById('bp-status').textContent='Трек '+(t.i+1)+'...';
-      const dur=Math.min(t.buf.duration/t.speed,300);
-      const oc=new OfflineAudioContext(2,Math.ceil(dur*SR),SR);
-      const src=oc.createBufferSource(); src.buffer=t.buf; src.playbackRate.value=t.speed;
-      const pan=oc.createStereoPanner(); pan.pan.value=t.pan;
-      const g=oc.createGain(); g.gain.value=t.vol;
-      src.connect(pan); pan.connect(g); g.connect(oc.destination); src.start(0);
-      const buf=await oc.startRendering();
-      await saveToDevice(await toBase64(bufferToWav(buf)),expDir,'track-'+(t.i+1)+'-'+(t.name||'tr')+'.wav');
-      await new Promise(r=>setTimeout(r,200));
-    }
-    document.getElementById('bp-fill').style.width='100%';
-    document.getElementById('bp-status').textContent='✓ Download/TapeLooper/'+expDir;
-  }
-}
-
-function bufferToWav(buffer) {
-  const nc=buffer.numberOfChannels,len=buffer.length,sr=buffer.sampleRate;
-  const ab=new ArrayBuffer(44+len*nc*2); const v=new DataView(ab);
-  function ws(o,s){for(let i=0;i<s.length;i++) v.setUint8(o+i,s.charCodeAt(i));}
-  ws(0,'RIFF'); v.setUint32(4,36+len*nc*2,true); ws(8,'WAVE'); ws(12,'fmt ');
-  v.setUint32(16,16,true); v.setUint16(20,1,true); v.setUint16(22,nc,true);
-  v.setUint32(24,sr,true); v.setUint32(28,sr*nc*2,true); v.setUint16(32,nc*2,true); v.setUint16(34,16,true);
-  ws(36,'data'); v.setUint32(40,len*nc*2,true);
-  let o=44;
-  for(let i=0;i<len;i++) for(let ch=0;ch<nc;ch++){const s=Math.max(-1,Math.min(1,buffer.getChannelData(ch)[i])); v.setInt16(o,s<0?s*0x8000:s*0x7FFF,true); o+=2;}
-  return new Blob([ab],{type:'audio/wav'});
-}
-
-// ═══════════════════════════════════════════════════════════════
-//  SAVE / LOAD
-// ═══════════════════════════════════════════════════════════════
-function saveProject() {
-  const name = prompt('Имя проекта:', projectName);
-  if (!name) return;
-  projectName = name.replace(/[^\w\-]/g,'_');
-  const data = {version:4, name:projectName,
-    gn:G.noise, gw:G.wow, gd:G.degrade, gb:G.bw,
-    fx:FX,
-    tracks:T.map(t=>({i:t.i,vol:t.vol,ig:t.inputGain,pan:t.pan,mute:t.mute,solo:t.solo,loop:t.loop,
-      speed:t.speed,noise:t.noise,wow:t.wow,degrade:t.degrade,bw:t.bw,eq:t.eq,sends:t.sends,name:t.name}))
-  };
-  const b64 = btoa(unescape(encodeURIComponent(JSON.stringify(data,null,2))));
-  saveToDevice(b64,'Projects',projectName+'.json').then(r=>{
-    if(r.startsWith('OK:')) alert('✓ Download/TapeLooper/Projects/'+projectName+'.json');
-    else alert('Ошибка: '+r);
-  });
-}
-
-function loadProject() {
-  const inp=document.createElement('input'); inp.type='file'; inp.accept='.json,application/json';
-  inp.onchange=async e=>{
-    const f=e.target.files[0]; if(!f) return;
-    try {
-      const data=JSON.parse(await f.text());
-      if(data.name) projectName=data.name;
-      if(data.gn!==undefined){G.noise=data.gn;gSliders.noise.setValue(G.noise);document.getElementById('vn').textContent=Math.round(G.noise*100)+'%';}
-      if(data.gw!==undefined){G.wow=data.gw;gSliders.wow.setValue(G.wow);document.getElementById('vw').textContent=Math.round(G.wow*100)+'%';}
-      if(data.gd!==undefined){G.degrade=data.gd;gSliders.degrade.setValue(G.degrade);document.getElementById('vd').textContent=Math.round(G.degrade*100)+'%';}
-      if(data.gb!==undefined){G.bw=data.gb;gSliders.bw.setValue(G.bw);document.getElementById('vb').textContent=Math.round(G.bw*100)+'%';}
-      if(data.fx){
-        Object.assign(FX.tape, data.fx.tape||{}); Object.assign(FX.spring, data.fx.spring||{}); Object.assign(FX.plate, data.fx.shimmer||{});
-        if(tapeProc){tapeProc.setTime(FX.tape.time);tapeProc.setFeedback(FX.tape.feedback);tapeProc.setTone(FX.tape.tone);tapeProc.setWow(FX.tape.wow);}
-        if(springProc){springProc.setDecay(FX.spring.decay);springProc.setTone(FX.spring.tone);springProc.setFeedback(FX.spring.feedback);}
-        if(plateProc){plateProc.setSize(FX.plate.size);plateProc.setFeedback(FX.plate.feedback);plateProc.setShimmer(FX.plate.shimmer);}
-      }
-      if(data.tracks) data.tracks.forEach(td=>{
-        const t=T[td.i];
-        Object.assign(t,{vol:td.vol,inputGain:td.ig,pan:td.pan||0,mute:td.mute,solo:td.solo,loop:td.loop,
-          speed:td.speed,noise:td.noise,wow:td.wow,degrade:td.degrade||0,bw:td.bw,eq:td.eq,sends:td.sends||{tape:0,spring:0,shimmer:0},name:td.name});
-        renderCard(t);
-        if(t.chain){
-          t.chain.setVol(t.vol); t.chain.setInputGain(t.inputGain); t.chain.setPan(t.pan);
-          t.chain.setNoise(t.noise); t.chain.setWow(t.wow); t.chain.setDegrade(t.degrade); t.chain.setBW(t.bw);
-          ['lo','lmid','hmid','hi'].forEach(b=>t.chain.setEQ(b,t.eq[b]));
-          ['tape','spring','plate'].forEach(fx=>t.chain.setSend(fx,t.sends[fx]));
-        }
-      });
-      applyGlobalTape(); alert('✓ Загружен: '+projectName);
-    } catch(e){alert('Ошибка: '+e.message);}
-  }; inp.click();
-}
-
-// ═══════════════════════════════════════════════════════════════
-//  VU METERS
-// ═══════════════════════════════════════════════════════════════
-const VB=12;
-function mkVU(id){const el=document.getElementById(id);if(!el)return;el.innerHTML='';for(let i=0;i<VB;i++){const d=document.createElement('div');d.className='mvb';d.style.height=(3+i*1.6)+'px';el.appendChild(d);}}
-function drawVU(anal,id){
-  if(!anal)return;const d=new Uint8Array(anal.frequencyBinCount);anal.getByteTimeDomainData(d);
-  let p=0;for(let i=0;i<d.length;i++) p=Math.max(p,Math.abs(d[i]-128)/128);
-  const el=document.getElementById(id);if(!el)return;const ch=el.children;
-  for(let i=0;i<VB;i++){const lit=p>i/VB;const c=i>=VB-2?'#ff3311':i>=VB-4?'#ffaa00':'#ffcc44';ch[i].style.background=lit?c:'#8090a0';ch[i].style.boxShadow=lit?`0 0 3px ${c}`:''; }
-}
-function drawTVU(t){
-  if(!t.chain)return;const d=new Uint8Array(t.chain.an.frequencyBinCount);t.chain.an.getByteTimeDomainData(d);
-  let p=0;for(let i=0;i<d.length;i++) p=Math.max(p,Math.abs(d[i]-128)/128);
-  const row=document.getElementById('tv'+t.i);if(!row)return;
-  const segs=row.children;const n=segs.length;
-  for(let i=0;i<n;i++){const lit=p>i/n;const c=i>=n-2?'#ff3311':i>=n-3?'#ffaa00':t.color;segs[i].style.background=lit?c:'#8090a0';segs[i].style.boxShadow=lit?`0 0 2px ${c}`:''; }
-}
-mkVU('vul'); mkVU('vur');
-(function vuLoop(){drawVU(analL,'vul');drawVU(analR,'vur');T.forEach(drawTVU);requestAnimationFrame(vuLoop);})();
-
-// ═══════════════════════════════════════════════════════════════
-//  RENDER
-// ═══════════════════════════════════════════════════════════════
-function db(v){return v<=0?'-∞':(20*Math.log10(v)).toFixed(0)+'dB';}
-function panLabel(p){return p===0?'C':p>0?'R'+Math.round(p*100):'L'+Math.round(-p*100);}
-
-function dots(){
-  document.getElementById('dr').className='dot'+(T.some(t=>t.recording)?' rec':'');
-  document.getElementById('dp').className='dot'+(T.some(t=>t.playing)?' play':'');
-  document.getElementById('tv-dr').className='dot'+(T.some(t=>t.recording)?' rec':'');
-  document.getElementById('tv-dp').className='dot'+(T.some(t=>t.playing)?' play':'');
-  const f=document.getElementById('foot-tracks');
-  f.innerHTML=T.map(t=>`<span style="color:${t.recording?'#cc2200':t.playing?t.color:t.buf?'#607080':'#b0bcc8'}">${t.recording?'●'+(t.i+1):t.playing?'▶'+(t.i+1):t.buf?'■'+(t.i+1):'_'+(t.i+1)}</span>`).join(' ');
-}
-
-function renderCard(t){
-  const el=document.getElementById('c'+t.i);if(!el)return;
-  el.className='card'+(t.buf?' hb':'')+(t.playing?' ip':'')+(t.recording?' ir':'');
-  el.querySelector('.tnum').style.color=t.color;
-  el.querySelector('.tname').textContent=t.name||(t.buf?'loaded':'no tape');
-  el.querySelector('.tpan').textContent=t.pan!==0?panLabel(t.pan):'';
-  el.querySelector('.tstat').className='tstat'+(t.recording?' rec':t.playing?' play':'');
-}
-
-// ═══════════════════════════════════════════════════════════════
-//  DETAIL VIEW
-// ═══════════════════════════════════════════════════════════════
-function openDetail(t){
-  currentTrack=t;
-  document.getElementById('tv-title').textContent='TR'+(t.i+1)+(t.name?' — '+t.name:'');
-  document.getElementById('tv-title').style.color=t.color;
-  buildDetailView(t);
-  document.getElementById('track-view').className='show';
-  tvScrollTop=0;
-  document.getElementById('tv-inner').style.transform='translateY(0)';
-}
-function closeDetail(){document.getElementById('track-view').className='';currentTrack=null;}
-
-function renderDetail(t){
-  if(currentTrack!==t)return;
-  const inner=document.getElementById('tv-inner');
-  const br=inner.querySelector('.btn-rec');
-  const bp=inner.querySelector('.btn-play');
-  if(br){br.className='tbig btn-rec'+(t.recording?' armed':'');br.textContent=t.recording?'⏺ STOP':'⏺ REC';}
-  if(bp){bp.className='tbig btn-play'+(t.buf?t.playing?' playing':'':' dis');bp.textContent=t.playing?'⏸ PAUSE':'▶ PLAY';}
-}
-
-function buildDetailView(t){
-  const inner=document.getElementById('tv-inner');
-  inner.innerHTML='';
-  const fi=document.createElement('input');fi.type='file';fi.accept='audio/*';fi.style.display='none';
-  fi.addEventListener('change',async e=>{
-    const f=e.target.files[0];if(!f)return;ctx();
-    try{const ab=await f.arrayBuffer();t.buf=await actx.decodeAudioData(ab);t.name=f.name.replace(/\.[^.]+$/,'').slice(0,20);renderCard(t);renderDetail(t);document.getElementById('tv-title').textContent='TR'+(t.i+1)+' — '+t.name;}
-    catch(e){alert('Ошибка: '+e.message);}fi.value='';
-  });
-  inner.appendChild(fi);
-
-  // TRANSPORT
-  const tsec=document.createElement('div');tsec.className='dsec';
-  tsec.innerHTML=`<div class="dsec-title">TRANSPORT</div>
-  <div class="tbrow">
-    <button class="tbig btn-rec ${t.recording?'armed':''}">${t.recording?'⏺ STOP':'⏺ REC'}</button>
-    <button class="tbig btn-load">📂 LOAD</button>
-    <button class="tbig btn-play ${t.buf?t.playing?'playing':'':'dis'}">${t.playing?'⏸ PAUSE':'▶ PLAY'}</button>
-    <button class="tbig btn-stop">■ STOP</button>
-  </div>
-  <div class="tbrow">
-    <button class="tbig btn-loop ${t.loop?'looping':''}">∞ LOOP</button>
-    <button class="tbig btn-mute ${t.mute?'muted':''}">MUTE</button>
-    <button class="tbig btn-solo ${t.solo?'soloed':''}">SOLO</button>
-    <button class="tbig btn-clr" style="color:var(--red)">✕ CLR</button>
-  </div>`;
-  tsec.querySelector('.btn-rec').addEventListener('click',()=>t.recording?recStop(t):recStart(t));
-  tsec.querySelector('.btn-load').addEventListener('click',()=>{ctx();fi.click();});
-  tsec.querySelector('.btn-play').addEventListener('click',()=>{if(t.buf) t.playing?stopT(t):playT(t);});
-  tsec.querySelector('.btn-stop').addEventListener('click',()=>stopT(t));
-  tsec.querySelector('.btn-loop').addEventListener('click',()=>{t.loop=!t.loop;if(t.src)t.src.loop=t.loop||globalLoop;tsec.querySelector('.btn-loop').className='tbig btn-loop'+(t.loop?' looping':'');});
-  tsec.querySelector('.btn-mute').addEventListener('click',()=>{t.mute=!t.mute;updateMutes();tsec.querySelector('.btn-mute').className='tbig btn-mute'+(t.mute?' muted':'');});
-  tsec.querySelector('.btn-solo').addEventListener('click',()=>{t.solo=!t.solo;updateMutes();tsec.querySelector('.btn-solo').className='tbig btn-solo'+(t.solo?' soloed':'');});
-  tsec.querySelector('.btn-clr').addEventListener('click',()=>{stopT(t);t.buf=null;t.name=null;renderCard(t);closeDetail();});
-  inner.appendChild(tsec);
-
-  // LEVELS
-  const lsec=document.createElement('div');lsec.className='dsec';
-  lsec.innerHTML=`<div class="dsec-title">LEVELS</div>
-  <div class="drow"><span class="dlbl">VOLUME</span><div class="cslider" id="sl-vol-${t.i}"><div class="cslider-track"></div><div class="cslider-fill"></div><div class="cslider-thumb"></div></div><span class="dval" id="sv-vol-${t.i}">${db(t.vol)}</span></div>
-  <div class="drow"><span class="dlbl">PAN</span><div class="cslider" id="sl-pan-${t.i}"><div class="cslider-track"></div><div class="cslider-fill"></div><div class="cslider-thumb"></div></div><span class="dval" id="sv-pan-${t.i}">${panLabel(t.pan)}</span></div>
-  <div class="drow"><span class="dlbl">INPUT GAIN</span><div class="cslider" id="sl-ig-${t.i}"><div class="cslider-track"></div><div class="cslider-fill"></div><div class="cslider-thumb"></div></div><span class="dval" id="sv-ig-${t.i}">${Math.round(t.inputGain*100)}%</span></div>
-  <div class="drow"><span class="dlbl">SPEED</span><div class="cslider" id="sl-spd-${t.i}"><div class="cslider-track"></div><div class="cslider-fill"></div><div class="cslider-thumb"></div></div><span class="dval" id="sv-spd-${t.i}">${t.speed.toFixed(2)}x</span></div>`;
-  inner.appendChild(lsec);
-
-  // TAPE
-  const tpsec=document.createElement('div');tpsec.className='dsec';
-  tpsec.innerHTML=`<div class="dsec-title">TAPE CHARACTER</div>
-  <div class="drow"><span class="dlbl">NOISE</span><div class="cslider" id="sl-ns-${t.i}"><div class="cslider-track"></div><div class="cslider-fill"></div><div class="cslider-thumb"></div></div><span class="dval" id="sv-ns-${t.i}">${Math.round(t.noise*100)}%</span></div>
-  <div class="drow"><span class="dlbl">WOW/FLUTTER</span><div class="cslider" id="sl-wow-${t.i}"><div class="cslider-track"></div><div class="cslider-fill"></div><div class="cslider-thumb"></div></div><span class="dval" id="sv-wow-${t.i}">${Math.round(t.wow*100)}%</span></div>
-  <div class="drow"><span class="dlbl">DEGRADE</span><div class="cslider" id="sl-deg-${t.i}"><div class="cslider-track"></div><div class="cslider-fill"></div><div class="cslider-thumb"></div></div><span class="dval" id="sv-deg-${t.i}">${Math.round(t.degrade*100)}%</span></div>
-  <div class="drow"><span class="dlbl">BANDWIDTH</span><div class="cslider" id="sl-bw-${t.i}"><div class="cslider-track"></div><div class="cslider-fill"></div><div class="cslider-thumb"></div></div><span class="dval" id="sv-bw-${t.i}">${Math.round(t.bw*100)}%</span></div>`;
-  inner.appendChild(tpsec);
-
-  // FX SENDS
-  const fxsec=document.createElement('div');fxsec.className='dsec';
-  fxsec.innerHTML=`<div class="dsec-title">FX SENDS</div>
-  <div class="sends-grid">
-    <div class="send-item">
-      <span class="send-lbl tape">TAPE DLY</span>
-      <div class="cslider" id="snd-tape-${t.i}" style="width:100%;height:44px"><div class="cslider-track"></div><div class="cslider-fill tape"></div><div class="cslider-thumb"></div></div>
-      <span class="send-val tape" id="snv-tape-${t.i}">${Math.round(t.sends.tape*100)}%</span>
-    </div>
-    <div class="send-item">
-      <span class="send-lbl spring">SPRING</span>
-      <div class="cslider" id="snd-spring-${t.i}" style="width:100%;height:44px"><div class="cslider-track"></div><div class="cslider-fill spring"></div><div class="cslider-thumb"></div></div>
-      <span class="send-val spring" id="snv-spring-${t.i}">${Math.round(t.sends.spring*100)}%</span>
-    </div>
-    <div class="send-item">
-      <span class="send-lbl plate">PLATE</span>
-      <div class="cslider" id="snd-plate-${t.i}" style="width:100%;height:44px"><div class="cslider-track"></div><div class="cslider-fill plate"></div><div class="cslider-thumb"></div></div>
-      <span class="send-val plate" id="snv-plate-${t.i}">${Math.round(t.sends.plate*100)}%</span>
-    </div>
-  </div>`;
-  inner.appendChild(fxsec);
-
-  // EQ
-  const eqsec=document.createElement('div');eqsec.className='dsec';
-  eqsec.innerHTML=`<div class="dsec-title">4-BAND EQ</div>
-  <div class="eq-grid">
-    <div class="eq-band"><div class="eq-top"><span class="eq-lbl">LO 120Hz</span><span class="eq-val" id="ev-lo-${t.i}">${(t.eq.lo>=0?'+':'')+t.eq.lo.toFixed(1)}dB</span></div><div class="cslider" id="sl-lo-${t.i}"><div class="cslider-track"></div><div class="cslider-fill"></div><div class="cslider-thumb round"></div></div></div>
-    <div class="eq-band"><div class="eq-top"><span class="eq-lbl">LO-MID 500Hz</span><span class="eq-val" id="ev-lmid-${t.i}">${(t.eq.lmid>=0?'+':'')+t.eq.lmid.toFixed(1)}dB</span></div><div class="cslider" id="sl-lmid-${t.i}"><div class="cslider-track"></div><div class="cslider-fill"></div><div class="cslider-thumb round"></div></div></div>
-    <div class="eq-band"><div class="eq-top"><span class="eq-lbl">HI-MID 3kHz</span><span class="eq-val" id="ev-hmid-${t.i}">${(t.eq.hmid>=0?'+':'')+t.eq.hmid.toFixed(1)}dB</span></div><div class="cslider" id="sl-hmid-${t.i}"><div class="cslider-track"></div><div class="cslider-fill"></div><div class="cslider-thumb round"></div></div></div>
-    <div class="eq-band"><div class="eq-top"><span class="eq-lbl">HI 10kHz</span><span class="eq-val" id="ev-hi-${t.i}">${(t.eq.hi>=0?'+':'')+t.eq.hi.toFixed(1)}dB</span></div><div class="cslider" id="sl-hi-${t.i}"><div class="cslider-track"></div><div class="cslider-fill"></div><div class="cslider-thumb round"></div></div></div>
-  </div>`;
-  inner.appendChild(eqsec);
-
-  requestAnimationFrame(()=>{
-    makeSlider(document.getElementById('sl-vol-'+t.i),0,1,t.vol,v=>{t.vol=v;if(t.chain)t.chain.setVol(v);document.getElementById('sv-vol-'+t.i).textContent=db(v);});
-    makeSlider(document.getElementById('sl-pan-'+t.i),-1,1,t.pan,v=>{t.pan=v;if(t.chain)t.chain.setPan(v);document.getElementById('sv-pan-'+t.i).textContent=panLabel(v);renderCard(t);},true);
-    makeSlider(document.getElementById('sl-ig-'+t.i),0,1,t.inputGain,v=>{t.inputGain=v;if(t.chain)t.chain.setInputGain(v);document.getElementById('sv-ig-'+t.i).textContent=Math.round(v*100)+'%';});
-    makeSlider(document.getElementById('sl-spd-'+t.i),0.1,2.0,t.speed,v=>{t.speed=v;if(t.src)t.src.playbackRate.value=v;document.getElementById('sv-spd-'+t.i).textContent=v.toFixed(2)+'x';});
-    makeSlider(document.getElementById('sl-ns-'+t.i),0,1,t.noise,v=>{t.noise=v;if(t.chain)t.chain.setNoise(v);document.getElementById('sv-ns-'+t.i).textContent=Math.round(v*100)+'%';});
-    makeSlider(document.getElementById('sl-wow-'+t.i),0,1,t.wow,v=>{t.wow=v;if(t.chain)t.chain.setWow(v);document.getElementById('sv-wow-'+t.i).textContent=Math.round(v*100)+'%';});
-    makeSlider(document.getElementById('sl-deg-'+t.i),0,1,t.degrade,v=>{t.degrade=v;if(t.chain)t.chain.setDegrade(v);document.getElementById('sv-deg-'+t.i).textContent=Math.round(v*100)+'%';});
-    makeSlider(document.getElementById('sl-bw-'+t.i),0,1,t.bw,v=>{t.bw=v;if(t.chain)t.chain.setBW(v);document.getElementById('sv-bw-'+t.i).textContent=Math.round(v*100)+'%';});
-    // FX sends
-    ['tape','spring','plate'].forEach(fx=>{
-      makeSlider(document.getElementById('snd-'+fx+'-'+t.i),0,1,t.sends[fx],v=>{
-        t.sends[fx]=v;if(t.chain)t.chain.setSend(fx,v);
-        document.getElementById('snv-'+fx+'-'+t.i).textContent=Math.round(v*100)+'%';
-      });
-    });
-    ['lo','lmid','hmid','hi'].forEach(band=>{
-      makeSlider(document.getElementById('sl-'+band+'-'+t.i),-12,12,t.eq[band],v=>{
-        t.eq[band]=v;if(t.chain)t.chain.setEQ(band,v);
-        document.getElementById('ev-'+band+'-'+t.i).textContent=(v>=0?'+':'')+v.toFixed(1)+'dB';
-      },true);
-    });
-  });
-  initTVScroll();
-}
-
-// ═══════════════════════════════════════════════════════════════
-//  BUILD TRACK LIST
-// ═══════════════════════════════════════════════════════════════
-const scroll=document.getElementById('scroll');
-T.forEach(t=>{
-  const card=document.createElement('div');
-  card.id='c'+t.i; card.className='card';
-  card.innerHTML=`<div class="card-row">
-    <span class="tnum" style="color:${t.color}">TR${t.i+1}</span>
-    <span class="tname">no tape</span>
-    <span class="tpan"></span>
-    <div class="tvrow" id="tv${t.i}">${Array.from({length:10}).map(()=>'<div class="vs"></div>').join('')}</div>
-    <div class="tstat"></div>
-    <span style="font-size:14px;color:var(--txt3);margin-left:4px">›</span>
-  </div>`;
-  card.addEventListener('click',()=>openDetail(t));
-  scroll.appendChild(card);
-});
-
-// ═══════════════════════════════════════════════════════════════
-//  SCROLL ENGINES
-// ═══════════════════════════════════════════════════════════════
-(function(){
-  const wrap=document.getElementById('scroll-wrap');
-  const el=document.getElementById('scroll');
-  let startY=0,startTop=0,scrollTop=0,maxScroll=0;
-  function updateMax(){maxScroll=Math.max(0,el.scrollHeight-wrap.clientHeight);}
-  wrap.addEventListener('touchstart',e=>{if(activeSlider)return;startY=e.touches[0].clientY;startTop=scrollTop;updateMax();},{passive:true});
-  wrap.addEventListener('touchmove',e=>{
-    if(activeSlider)return;
-    const dy=startY-e.touches[0].clientY;
-    scrollTop=Math.max(0,Math.min(maxScroll,startTop+dy));
-    el.style.transform=`translateY(-${scrollTop}px)`;
-    e.preventDefault();
-  },{passive:false});
-  window.addEventListener('resize',()=>{scrollTop=0;el.style.transform='translateY(0)';setTimeout(updateMax,200);});
-})();
-
-let tvScrollTop=0;
-function initTVScroll(){
-  tvScrollTop=0;
-  const wrap=document.getElementById('tv-wrap');
-  const el=document.getElementById('tv-inner');
-  el.style.transform='translateY(0)';
-  if(wrap._scrollInit)return;
-  wrap._scrollInit=true;
-  let startY=0,startTop=0,maxScroll=0;
-  wrap.addEventListener('touchstart',e=>{if(activeSlider)return;startY=e.touches[0].clientY;startTop=tvScrollTop;maxScroll=Math.max(0,el.scrollHeight-wrap.clientHeight);},{passive:true});
-  wrap.addEventListener('touchmove',e=>{
-    if(activeSlider)return;
-    const dy=startY-e.touches[0].clientY;
-    tvScrollTop=Math.max(0,Math.min(maxScroll,startTop+dy));
-    el.style.transform=`translateY(-${tvScrollTop}px)`;
-    e.preventDefault();
-  },{passive:false});
-}
-
-let fxScrollTop=0;
-function initFXScroll(){
-  fxScrollTop=0;
-  const wrap=document.getElementById('fx-wrap');
-  const el=document.getElementById('fx-inner');
-  el.style.transform='translateY(0)';
-  if(wrap._scrollInit)return;
-  wrap._scrollInit=true;
-  let startY=0,startTop=0,maxScroll=0;
-  wrap.addEventListener('touchstart',e=>{if(activeSlider)return;startY=e.touches[0].clientY;startTop=fxScrollTop;maxScroll=Math.max(0,el.scrollHeight-wrap.clientHeight);},{passive:true});
-  wrap.addEventListener('touchmove',e=>{
-    if(activeSlider)return;
-    const dy=startY-e.touches[0].clientY;
-    fxScrollTop=Math.max(0,Math.min(maxScroll,startTop+dy));
-    el.style.transform=`translateY(-${fxScrollTop}px)`;
-    e.preventDefault();
-  },{passive:false});
-}
-
-// ═══════════════════════════════════════════════════════════════
-//  GLOBAL TAPE SLIDERS
-// ═══════════════════════════════════════════════════════════════
-gSliders.noise   = makeSlider(document.getElementById('gs-noise'),  0,1,G.noise,   v=>{G.noise=v;  document.getElementById('vn').textContent=Math.round(v*100)+'%';applyGlobalTape();});
-gSliders.wow     = makeSlider(document.getElementById('gs-wow'),    0,1,G.wow,     v=>{G.wow=v;    document.getElementById('vw').textContent=Math.round(v*100)+'%';applyGlobalTape();});
-gSliders.degrade = makeSlider(document.getElementById('gs-degrade'),0,1,G.degrade, v=>{G.degrade=v;document.getElementById('vd').textContent=Math.round(v*100)+'%';applyGlobalTape();});
-gSliders.bw      = makeSlider(document.getElementById('gs-bw'),     0,1,G.bw,      v=>{G.bw=v;     document.getElementById('vb').textContent=Math.round(v*100)+'%';applyGlobalTape();});
-
-// FX return sliders
-makeSlider(document.getElementById('rtn-tape'),   0,1,FX.tape.return,   v=>{FX.tape.return=v;   if(tapeProc)   tapeProc.setReturn(v);   document.getElementById('rv-tape').textContent=Math.round(v*100)+'%';});
-makeSlider(document.getElementById('rtn-spring'), 0,1,FX.spring.return, v=>{FX.spring.return=v; if(springProc) springProc.setReturn(v); document.getElementById('rv-spring').textContent=Math.round(v*100)+'%';});
-makeSlider(document.getElementById('rtn-plate'),0,1,FX.plate.return,v=>{FX.plate.return=v;if(plateProc)plateProc.setReturn(v);document.getElementById('rv-plate').textContent=Math.round(v*100)+'%';});
-
-// ═══════════════════════════════════════════════════════════════
-//  MASTER CONTROLS
-// ═══════════════════════════════════════════════════════════════
-document.getElementById('ba-play').addEventListener('click',()=>{ctx();T.forEach(t=>{if(t.buf&&!t.playing)playT(t);});});
-document.getElementById('ba-stop').addEventListener('click',()=>T.forEach(stopT));
-document.getElementById('ba-rec').addEventListener('click',()=>{const any=T.some(t=>t.recording);if(any)T.forEach(t=>{if(t.recording)recStop(t);});else T.forEach(t=>recStart(t));});
-document.getElementById('ba-loop').addEventListener('click',function(){globalLoop=!globalLoop;this.className='mbtn'+(globalLoop?' al':'');T.forEach(t=>{if(t.src)t.src.loop=t.loop||globalLoop;});});
-document.getElementById('btn-save').addEventListener('click',saveProject);
-document.getElementById('btn-load-proj').addEventListener('click',loadProject);
-document.getElementById('btn-bounce').addEventListener('click',showBounce);
-document.getElementById('tv-back').addEventListener('click',closeDetail);
-
-dots();
-</script>
-</body>
-</html>// ─── PLATE REVERB (Dattorro-inspired) ───────────────────────
 function buildPlateReverb(c) {
   const input  = c.createGain(); input.gain.value = 1;
   const output = c.createGain(); output.gain.value = FX.plate.return;
 
-  // Pre-delay
   const preDly = c.createDelay(0.2); preDly.delayTime.value = FX.plate.predelay;
   input.connect(preDly);
 
-  // Input diffusion — 4 allpass filters (Dattorro input section)
   const inAP = [
     {t:0.004771,g:0.75}, {t:0.003595,g:0.75},
     {t:0.012735,g:0.625},{t:0.009307,g:0.625}
@@ -1342,14 +529,11 @@ function buildPlateReverb(c) {
   inAP.forEach(({t,g}) => {
     const d = c.createDelay(0.05); d.delayTime.value = t;
     const fb= c.createGain(); fb.gain.value = g * (0.5 + FX.plate.size*0.5);
-    const ng= c.createGain(); ng.gain.value = -g;
     diffChain.connect(d); d.connect(fb); fb.connect(d);
-    diffChain.connect(ng);
     diffChain = fb;
     inAPGs.push(fb);
   });
 
-  // Plate tank — two interconnected delay loops (Dattorro figure-8)
   // Left loop
   const apL1d = c.createDelay(0.1);  apL1d.delayTime.value = 0.030509;
   const apL1g = c.createGain();       apL1g.gain.value = 0.7;
@@ -1372,32 +556,26 @@ function buildPlateReverb(c) {
   const apR2g = c.createGain();       apR2g.gain.value = 0.7;
   const dR2   = c.createDelay(0.5);  dR2.delayTime.value   = 0.106280 * (0.5+FX.plate.size*0.8);
 
-  // Wire left loop
   diffChain.connect(apL1d); apL1d.connect(apL1g);
   apL1g.connect(dL1); dL1.connect(dampL); dampL.connect(decayL);
   decayL.connect(apL2d); apL2d.connect(apL2g); apL2g.connect(dL2);
 
-  // Wire right loop
   diffChain.connect(apR1d); apR1d.connect(apR1g);
   apR1g.connect(dR1); dR1.connect(dampR); dampR.connect(decayR);
   decayR.connect(apR2d); apR2d.connect(apR2g); apR2g.connect(dR2);
 
   // Cross-couple loops (figure-8 topology)
-  dL2.connect(apR1d);  // left feeds right
-  dR2.connect(apL1d);  // right feeds left
+  dL2.connect(apR1d);
+  dR2.connect(apL1d);
 
-  // Output taps — multiple points for smooth dense sound
   const outL = c.createGain(); outL.gain.value = 0.25;
   const outR = c.createGain(); outR.gain.value = 0.25;
-  const merger = c.createChannelMerger(2);
   dL1.connect(outL); dL2.connect(outL);
   dR1.connect(outR); dR2.connect(outR);
-  outL.connect(merger, 0, 0);
-  outR.connect(merger, 0, 1);
-  merger.connect(output);
+  outL.connect(output);
+  outR.connect(output);
   output.connect(masterGain);
 
-  // Plate modulation — subtle LFOs on allpass delays for smoothness
   const modLFO1 = c.createOscillator(); modLFO1.frequency.value=0.51;
   const modLFO2 = c.createOscillator(); modLFO2.frequency.value=0.73;
   const modD1   = c.createGain(); modD1.gain.value=0.0004;
@@ -1431,13 +609,15 @@ function initFX() {
   const c = actx;
   tapeProc   = buildTapeDelay(c);
   springProc = buildSpringReverb(c);
-  plateProc = buildShimmerReverb(c);
+  plateProc  = buildPlateReverb(c);
   tapeBus    = tapeProc.input;
   springBus  = springProc.input;
-  plateBus = plateProc.input;
+  plateBus   = plateProc.input;
 }
 
-// ─── TRACK CHAIN ─────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════
+//  TRACK AUDIO CHAIN
+// ═══════════════════════════════════════════════════════════════
 function buildChain(t) {
   if (t.chain) return t.chain;
   const c = ctx();
@@ -1451,7 +631,6 @@ function buildChain(t) {
   }
   sat.curve = makeSat(2); sat.oversample = '4x';
 
-  // Tape hiss
   const nb = c.createBuffer(1, c.sampleRate*4, c.sampleRate);
   const nd = nb.getChannelData(0); for(let i=0;i<nd.length;i++) nd[i]=Math.random()*2-1;
   const ns = c.createBufferSource(); ns.buffer=nb; ns.loop=true;
@@ -1495,12 +674,10 @@ function buildChain(t) {
   const mg=c.createGain(); mg.gain.value=1;
   const an=c.createAnalyser(); an.fftSize=256;
 
-  // FX sends
   const sendTape    = c.createGain(); sendTape.gain.value    = t.sends.tape;
   const sendSpring  = c.createGain(); sendSpring.gain.value  = t.sends.spring;
   const sendPlate   = c.createGain(); sendPlate.gain.value   = t.sends.plate;
 
-  // Signal path
   inpG.connect(sat); sat.connect(hp); hp.connect(lp); lp.connect(dl);
   dl.connect(lpDeg); lpDeg.connect(hiShelf); hiShelf.connect(loShelf);
   loShelf.connect(driftMix); driftMix.connect(eqLo);
@@ -1509,10 +686,9 @@ function buildChain(t) {
   ng.connect(mg);
   mg.connect(an); an.connect(masterGain);
 
-  // FX sends (pre-fader post-EQ)
   eqHi.connect(sendTape);    sendTape.connect(tapeBus);
   eqHi.connect(sendSpring);  sendSpring.connect(springBus);
-  eqHi.connect(sendPlate); sendPlate.connect(plateBus);
+  eqHi.connect(sendPlate);   sendPlate.connect(plateBus);
 
   t.chain = {
     inp:inpG, sat, fdr, panner, mg, an, ng, lp, lpDeg, hiShelf, loShelf,
@@ -1527,9 +703,9 @@ function buildChain(t) {
     setBW:       v => { lp.frequency.value = 1000+v*12000; },
     setEQ: (b,v) => { if(b==='lo') eqLo.gain.value=v; else if(b==='lmid') eqLM.gain.value=v; else if(b==='hmid') eqHM.gain.value=v; else if(b==='hi') eqHi.gain.value=v; },
     setSend: (fx,v) => {
-      if(fx==='tape')    sendTape.gain.value=v;
-      else if(fx==='spring')  sendSpring.gain.value=v;
-      else if(fx==='plate')   sendPlate.gain.value=v;
+      if(fx==='tape')        sendTape.gain.value=v;
+      else if(fx==='spring') sendSpring.gain.value=v;
+      else if(fx==='plate')  sendPlate.gain.value=v;
     }
   };
   return t.chain;
@@ -1567,11 +743,9 @@ function stopT(t) {
 }
 
 async function recStart(t) {
-  // Init AudioContext first (requires user gesture)
   ctx();
   if (actx.state === 'suspended') await actx.resume();
   try {
-    // Request mic with fallback constraints
     let stream;
     try {
       stream = await navigator.mediaDevices.getUserMedia({
@@ -1579,10 +753,8 @@ async function recStart(t) {
         video:false
       });
     } catch(e1) {
-      // Fallback: try with default constraints
       stream = await navigator.mediaDevices.getUserMedia({audio:true, video:false});
     }
-    // Pick best available codec
     const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
       ? 'audio/webm;codecs=opus'
       : MediaRecorder.isTypeSupported('audio/webm')
@@ -1601,13 +773,12 @@ async function recStart(t) {
         t.buf  = await actx.decodeAudioData(ab);
         t.name = 'mic-'+(t.i+1);
       } catch(e) {
-        console.error('Decode error:', e);
         t.name = 'decode-err';
         alert('Ошибка декодирования: '+e.message);
       }
       t.recording=false; renderCard(t); renderDetail(t); dots();
     };
-    mr.start(100); // collect every 100ms
+    mr.start(100);
     t.mr=mr; t.recording=true; renderCard(t); renderDetail(t); dots();
   } catch(e) {
     alert('Микрофон недоступен: '+e.message+'\n\nПроверьте разрешения в настройках приложения.');
@@ -1622,8 +793,8 @@ let currentFX = null;
 
 function openFX(type) {
   currentFX = type;
-  const titles = {tape:'TAPE DELAY', spring:'SPRING REVERB', shimmer:'PLATE REVERB'};
-  const colors  = {tape:'var(--amber2)', spring:'var(--teal)', shimmer:'var(--teal)'};
+  const titles = {tape:'TAPE DELAY', spring:'SPRING REVERB', plate:'PLATE REVERB'};
+  const colors  = {tape:'var(--amber2)', spring:'var(--teal)', plate:'var(--teal)'};
   document.getElementById('fx-title').textContent = titles[type];
   document.getElementById('fx-title').style.color = colors[type];
   buildFXPanel(type);
@@ -1637,11 +808,11 @@ function buildFXPanel(type) {
   const sec = document.createElement('div'); sec.className = 'dsec';
 
   if (type === 'tape') {
-    sec.innerHTML = `<div class="dsec-title">TAPE DELAY PARAMETERS</div>
-    <div class="drow"><span class="dlbl">DELAY TIME</span><div class="cslider" id="fxp-time"><div class="cslider-track"></div><div class="cslider-fill tape"></div><div class="cslider-thumb"></div></div><span class="dval" id="fxv-time">${FX.tape.time.toFixed(2)}s</span></div>
-    <div class="drow"><span class="dlbl">FEEDBACK</span><div class="cslider" id="fxp-fb"><div class="cslider-track"></div><div class="cslider-fill tape"></div><div class="cslider-thumb"></div></div><span class="dval" id="fxv-fb">${Math.round(FX.tape.feedback*100)}%</span></div>
-    <div class="drow"><span class="dlbl">TONE</span><div class="cslider" id="fxp-tone"><div class="cslider-track"></div><div class="cslider-fill tape"></div><div class="cslider-thumb"></div></div><span class="dval" id="fxv-tone">${Math.round(FX.tape.tone*100)}%</span></div>
-    <div class="drow"><span class="dlbl">WOW</span><div class="cslider" id="fxp-wow"><div class="cslider-track"></div><div class="cslider-fill tape"></div><div class="cslider-thumb"></div></div><span class="dval" id="fxv-wow">${Math.round(FX.tape.wow*100)}%</span></div>`;
+    sec.innerHTML = '<div class="dsec-title">TAPE DELAY PARAMETERS</div>'
+      + '<div class="drow"><span class="dlbl">DELAY TIME</span><div class="cslider" id="fxp-time"><div class="cslider-track"></div><div class="cslider-fill tape"></div><div class="cslider-thumb"></div></div><span class="dval" id="fxv-time">'+FX.tape.time.toFixed(2)+'s</span></div>'
+      + '<div class="drow"><span class="dlbl">FEEDBACK</span><div class="cslider" id="fxp-fb"><div class="cslider-track"></div><div class="cslider-fill tape"></div><div class="cslider-thumb"></div></div><span class="dval" id="fxv-fb">'+Math.round(FX.tape.feedback*100)+'%</span></div>'
+      + '<div class="drow"><span class="dlbl">TONE</span><div class="cslider" id="fxp-tone"><div class="cslider-track"></div><div class="cslider-fill tape"></div><div class="cslider-thumb"></div></div><span class="dval" id="fxv-tone">'+Math.round(FX.tape.tone*100)+'%</span></div>'
+      + '<div class="drow"><span class="dlbl">WOW</span><div class="cslider" id="fxp-wow"><div class="cslider-track"></div><div class="cslider-fill tape"></div><div class="cslider-thumb"></div></div><span class="dval" id="fxv-wow">'+Math.round(FX.tape.wow*100)+'%</span></div>';
     inner.appendChild(sec);
     requestAnimationFrame(() => {
       makeSlider(document.getElementById('fxp-time'), 0.05, 2.0, FX.tape.time, v => { FX.tape.time=v; if(tapeProc) tapeProc.setTime(v); document.getElementById('fxv-time').textContent=v.toFixed(2)+'s'; });
@@ -1650,12 +821,12 @@ function buildFXPanel(type) {
       makeSlider(document.getElementById('fxp-wow'),  0, 1, FX.tape.wow, v => { FX.tape.wow=v; if(tapeProc) tapeProc.setWow(v); document.getElementById('fxv-wow').textContent=Math.round(v*100)+'%'; });
     });
   } else if (type === 'spring') {
-    sec.innerHTML = `<div class="dsec-title">SPRING REVERB PARAMETERS</div>
-    <div class="drow"><span class="dlbl">DECAY</span><div class="cslider" id="fxp-dec"><div class="cslider-track"></div><div class="cslider-fill spring"></div><div class="cslider-thumb"></div></div><span class="dval" id="fxv-dec">${Math.round(FX.spring.decay*100)}%</span></div>
-    <div class="drow"><span class="dlbl">TONE</span><div class="cslider" id="fxp-ston"><div class="cslider-track"></div><div class="cslider-fill spring"></div><div class="cslider-thumb"></div></div><span class="dval" id="fxv-ston">${Math.round(FX.spring.tone*100)}%</span></div>
-    <div class="drow"><span class="dlbl">DIFFUSION</span><div class="cslider" id="fxp-sdif"><div class="cslider-track"></div><div class="cslider-fill spring"></div><div class="cslider-thumb"></div></div><span class="dval" id="fxv-sdif">${Math.round(FX.spring.diffusion*100)}%</span></div>
-    <div class="drow"><span class="dlbl">TENSION</span><div class="cslider" id="fxp-sten"><div class="cslider-track"></div><div class="cslider-fill spring"></div><div class="cslider-thumb"></div></div><span class="dval" id="fxv-sten">${Math.round(FX.spring.tension*100)}%</span></div>
-    <div class="drow"><span class="dlbl">PRE-DELAY</span><div class="cslider" id="fxp-spre"><div class="cslider-track"></div><div class="cslider-fill spring"></div><div class="cslider-thumb"></div></div><span class="dval" id="fxv-spre">${Math.round(FX.spring.predelay*1000)}ms</span></div>`;
+    sec.innerHTML = '<div class="dsec-title">SPRING REVERB PARAMETERS</div>'
+      + '<div class="drow"><span class="dlbl">DECAY</span><div class="cslider" id="fxp-dec"><div class="cslider-track"></div><div class="cslider-fill spring"></div><div class="cslider-thumb"></div></div><span class="dval" id="fxv-dec">'+Math.round(FX.spring.decay*100)+'%</span></div>'
+      + '<div class="drow"><span class="dlbl">TONE</span><div class="cslider" id="fxp-ston"><div class="cslider-track"></div><div class="cslider-fill spring"></div><div class="cslider-thumb"></div></div><span class="dval" id="fxv-ston">'+Math.round(FX.spring.tone*100)+'%</span></div>'
+      + '<div class="drow"><span class="dlbl">DIFFUSION</span><div class="cslider" id="fxp-sdif"><div class="cslider-track"></div><div class="cslider-fill spring"></div><div class="cslider-thumb"></div></div><span class="dval" id="fxv-sdif">'+Math.round(FX.spring.diffusion*100)+'%</span></div>'
+      + '<div class="drow"><span class="dlbl">TENSION</span><div class="cslider" id="fxp-sten"><div class="cslider-track"></div><div class="cslider-fill spring"></div><div class="cslider-thumb"></div></div><span class="dval" id="fxv-sten">'+Math.round(FX.spring.tension*100)+'%</span></div>'
+      + '<div class="drow"><span class="dlbl">PRE-DELAY</span><div class="cslider" id="fxp-spre"><div class="cslider-track"></div><div class="cslider-fill spring"></div><div class="cslider-thumb"></div></div><span class="dval" id="fxv-spre">'+Math.round(FX.spring.predelay*1000)+'ms</span></div>';
     inner.appendChild(sec);
     requestAnimationFrame(() => {
       makeSlider(document.getElementById('fxp-dec'),  0, 0.95, FX.spring.decay,     v => { FX.spring.decay=v;      if(springProc) springProc.setDecay(v);     document.getElementById('fxv-dec').textContent=Math.round(v*100)+'%'; });
@@ -1665,19 +836,17 @@ function buildFXPanel(type) {
       makeSlider(document.getElementById('fxp-spre'), 0, 0.1,  FX.spring.predelay,  v => { FX.spring.predelay=v;   if(springProc) springProc.setPreDelay(v);  document.getElementById('fxv-spre').textContent=Math.round(v*1000)+'ms'; });
     });
   } else {
-    sec.innerHTML = `<div class="dsec-title">PLATE REVERB PARAMETERS</div>
-    <div class="drow"><span class="dlbl">SIZE</span><div class="cslider" id="fxp-sz"><div class="cslider-track"></div><div class="cslider-fill plate"></div><div class="cslider-thumb"></div></div><span class="dval" id="fxv-sz">${Math.round(FX.plate.size*100)}%</span></div>
-    <div class="drow"><span class="dlbl">FEEDBACK</span><div class="cslider" id="fxp-shfb"><div class="cslider-track"></div><div class="cslider-fill plate"></div><div class="cslider-thumb"></div></div><span class="dval" id="fxv-shfb">${Math.round(FX.plate.feedback*100)}%</span></div>
-    <div class="drow"><span class="dlbl">PLATE</span><div class="cslider" id="fxp-shim"><div class="cslider-track"></div><div class="cslider-fill plate"></div><div class="cslider-thumb"></div></div><span class="dval" id="fxv-shim">${Math.round(FX.plate.shimmer*100)}%</span></div>
-    <div class="drow"><span class="dlbl">RATE</span><div class="cslider" id="fxp-shr"><div class="cslider-track"></div><div class="cslider-fill plate"></div><div class="cslider-thumb"></div></div><span class="dval" id="fxv-shr">${Math.round(FX.plate.rate*100)}%</span></div>
-    <div class="drow"><span class="dlbl">BLUR</span><div class="cslider" id="fxp-shbl"><div class="cslider-track"></div><div class="cslider-fill plate"></div><div class="cslider-thumb"></div></div><span class="dval" id="fxv-shbl">${Math.round(FX.plate.blur*100)}%</span></div>`;
+    sec.innerHTML = '<div class="dsec-title">PLATE REVERB PARAMETERS</div>'
+      + '<div class="drow"><span class="dlbl">SIZE</span><div class="cslider" id="fxp-psz"><div class="cslider-track"></div><div class="cslider-fill plate"></div><div class="cslider-thumb"></div></div><span class="dval" id="fxv-psz">'+Math.round(FX.plate.size*100)+'%</span></div>'
+      + '<div class="drow"><span class="dlbl">DECAY</span><div class="cslider" id="fxp-pdec"><div class="cslider-track"></div><div class="cslider-fill plate"></div><div class="cslider-thumb"></div></div><span class="dval" id="fxv-pdec">'+Math.round(FX.plate.decay*100)+'%</span></div>'
+      + '<div class="drow"><span class="dlbl">DAMPING</span><div class="cslider" id="fxp-pdmp"><div class="cslider-track"></div><div class="cslider-fill plate"></div><div class="cslider-thumb"></div></div><span class="dval" id="fxv-pdmp">'+Math.round(FX.plate.damp*100)+'%</span></div>'
+      + '<div class="drow"><span class="dlbl">PRE-DELAY</span><div class="cslider" id="fxp-ppre"><div class="cslider-track"></div><div class="cslider-fill plate"></div><div class="cslider-thumb"></div></div><span class="dval" id="fxv-ppre">'+Math.round(FX.plate.predelay*1000)+'ms</span></div>';
     inner.appendChild(sec);
     requestAnimationFrame(() => {
-      makeSlider(document.getElementById('fxp-sz'),   0, 1,    FX.plate.size,     v => { FX.plate.size=v;     if(plateProc) plateProc.setSize(v);     document.getElementById('fxv-sz').textContent=Math.round(v*100)+'%'; });
-      makeSlider(document.getElementById('fxp-shfb'), 0, 0.88, FX.plate.feedback, v => { FX.plate.feedback=v; if(plateProc) plateProc.setFeedback(v); document.getElementById('fxv-shfb').textContent=Math.round(v*100)+'%'; });
-      makeSlider(document.getElementById('fxp-shim'), 0, 1,    FX.plate.shimmer,  v => { FX.plate.shimmer=v;  if(plateProc) plateProc.setShimmer(v);  document.getElementById('fxv-shim').textContent=Math.round(v*100)+'%'; });
-      makeSlider(document.getElementById('fxp-shr'),  0, 1,    FX.plate.rate,     v => { FX.plate.rate=v;     if(plateProc) plateProc.setRate(v);     document.getElementById('fxv-shr').textContent=Math.round(v*100)+'%'; });
-      makeSlider(document.getElementById('fxp-shbl'), 0, 1,    FX.plate.blur,     v => { FX.plate.blur=v;     if(plateProc) plateProc.setBlur(v);     document.getElementById('fxv-shbl').textContent=Math.round(v*100)+'%'; });
+      makeSlider(document.getElementById('fxp-psz'),  0, 1,   FX.plate.size,      v=>{FX.plate.size=v;      if(plateProc) plateProc.setSize(v);      document.getElementById('fxv-psz').textContent=Math.round(v*100)+'%';});
+      makeSlider(document.getElementById('fxp-pdec'), 0, 0.95,FX.plate.decay,     v=>{FX.plate.decay=v;     if(plateProc) plateProc.setDecay(v);     document.getElementById('fxv-pdec').textContent=Math.round(v*100)+'%';});
+      makeSlider(document.getElementById('fxp-pdmp'), 0, 1,   FX.plate.damp,      v=>{FX.plate.damp=v;      if(plateProc) plateProc.setDamp(v);      document.getElementById('fxv-pdmp').textContent=Math.round(v*100)+'%';});
+      makeSlider(document.getElementById('fxp-ppre'), 0, 0.1, FX.plate.predelay,  v=>{FX.plate.predelay=v;  if(plateProc) plateProc.setPreDelay(v);  document.getElementById('fxv-ppre').textContent=Math.round(v*1000)+'ms';});
     });
   }
   initFXScroll();
@@ -1794,15 +963,15 @@ function loadProject() {
       if(data.gd!==undefined){G.degrade=data.gd;gSliders.degrade.setValue(G.degrade);document.getElementById('vd').textContent=Math.round(G.degrade*100)+'%';}
       if(data.gb!==undefined){G.bw=data.gb;gSliders.bw.setValue(G.bw);document.getElementById('vb').textContent=Math.round(G.bw*100)+'%';}
       if(data.fx){
-        Object.assign(FX.tape, data.fx.tape||{}); Object.assign(FX.spring, data.fx.spring||{}); Object.assign(FX.plate, data.fx.shimmer||{});
+        Object.assign(FX.tape, data.fx.tape||{}); Object.assign(FX.spring, data.fx.spring||{}); Object.assign(FX.plate, data.fx.plate||{});
         if(tapeProc){tapeProc.setTime(FX.tape.time);tapeProc.setFeedback(FX.tape.feedback);tapeProc.setTone(FX.tape.tone);tapeProc.setWow(FX.tape.wow);}
-        if(springProc){springProc.setDecay(FX.spring.decay);springProc.setTone(FX.spring.tone);springProc.setFeedback(FX.spring.feedback);}
-        if(plateProc){plateProc.setSize(FX.plate.size);plateProc.setFeedback(FX.plate.feedback);plateProc.setShimmer(FX.plate.shimmer);}
+        if(springProc){springProc.setDecay(FX.spring.decay);springProc.setTone(FX.spring.tone);springProc.setDiffusion(FX.spring.diffusion);springProc.setTension(FX.spring.tension);springProc.setPreDelay(FX.spring.predelay);}
+        if(plateProc){plateProc.setSize(FX.plate.size);plateProc.setDecay(FX.plate.decay);plateProc.setDamp(FX.plate.damp);plateProc.setPreDelay(FX.plate.predelay);}
       }
       if(data.tracks) data.tracks.forEach(td=>{
         const t=T[td.i];
         Object.assign(t,{vol:td.vol,inputGain:td.ig,pan:td.pan||0,mute:td.mute,solo:td.solo,loop:td.loop,
-          speed:td.speed,noise:td.noise,wow:td.wow,degrade:td.degrade||0,bw:td.bw,eq:td.eq,sends:td.sends||{tape:0,spring:0,shimmer:0},name:td.name});
+          speed:td.speed,noise:td.noise,wow:td.wow,degrade:td.degrade||0,bw:td.bw,eq:td.eq,sends:td.sends||{tape:0,spring:0,plate:0},name:td.name});
         renderCard(t);
         if(t.chain){
           t.chain.setVol(t.vol); t.chain.setInputGain(t.inputGain); t.chain.setPan(t.pan);
@@ -1825,14 +994,14 @@ function drawVU(anal,id){
   if(!anal)return;const d=new Uint8Array(anal.frequencyBinCount);anal.getByteTimeDomainData(d);
   let p=0;for(let i=0;i<d.length;i++) p=Math.max(p,Math.abs(d[i]-128)/128);
   const el=document.getElementById(id);if(!el)return;const ch=el.children;
-  for(let i=0;i<VB;i++){const lit=p>i/VB;const c=i>=VB-2?'#ff3311':i>=VB-4?'#ffaa00':'#ffcc44';ch[i].style.background=lit?c:'#8090a0';ch[i].style.boxShadow=lit?`0 0 3px ${c}`:''; }
+  for(let i=0;i<VB;i++){const lit=p>i/VB;const c=i>=VB-2?'#ff3311':i>=VB-4?'#ffaa00':'#ffcc44';ch[i].style.background=lit?c:'#8090a0';ch[i].style.boxShadow=lit?('0 0 3px '+c):'';}
 }
 function drawTVU(t){
   if(!t.chain)return;const d=new Uint8Array(t.chain.an.frequencyBinCount);t.chain.an.getByteTimeDomainData(d);
   let p=0;for(let i=0;i<d.length;i++) p=Math.max(p,Math.abs(d[i]-128)/128);
   const row=document.getElementById('tv'+t.i);if(!row)return;
   const segs=row.children;const n=segs.length;
-  for(let i=0;i<n;i++){const lit=p>i/n;const c=i>=n-2?'#ff3311':i>=n-3?'#ffaa00':t.color;segs[i].style.background=lit?c:'#8090a0';segs[i].style.boxShadow=lit?`0 0 2px ${c}`:''; }
+  for(let i=0;i<n;i++){const lit=p>i/n;const c=i>=n-2?'#ff3311':i>=n-3?'#ffaa00':t.color;segs[i].style.background=lit?c:'#8090a0';segs[i].style.boxShadow=lit?('0 0 2px '+c):'';}
 }
 mkVU('vul'); mkVU('vur');
 (function vuLoop(){drawVU(analL,'vul');drawVU(analR,'vur');T.forEach(drawTVU);requestAnimationFrame(vuLoop);})();
@@ -1841,7 +1010,7 @@ mkVU('vul'); mkVU('vur');
 //  RENDER
 // ═══════════════════════════════════════════════════════════════
 function db(v){return v<=0?'-∞':(20*Math.log10(v)).toFixed(0)+'dB';}
-function panLabel(p){return p===0?'C':p>0?'R'+Math.round(p*100):'L'+Math.round(-p*100);}
+function panLabel(p){return p===0?'C':p>0?('R'+Math.round(p*100)):('L'+Math.round(-p*100));}
 
 function dots(){
   document.getElementById('dr').className='dot'+(T.some(t=>t.recording)?' rec':'');
@@ -1849,7 +1018,7 @@ function dots(){
   document.getElementById('tv-dr').className='dot'+(T.some(t=>t.recording)?' rec':'');
   document.getElementById('tv-dp').className='dot'+(T.some(t=>t.playing)?' play':'');
   const f=document.getElementById('foot-tracks');
-  f.innerHTML=T.map(t=>`<span style="color:${t.recording?'#cc2200':t.playing?t.color:t.buf?'#607080':'#b0bcc8'}">${t.recording?'●'+(t.i+1):t.playing?'▶'+(t.i+1):t.buf?'■'+(t.i+1):'_'+(t.i+1)}</span>`).join(' ');
+  f.innerHTML=T.map(t=>'<span style="color:'+(t.recording?'#cc2200':t.playing?t.color:t.buf?'#607080':'#b0bcc8')+'">'+(t.recording?'●'+(t.i+1):t.playing?'▶'+(t.i+1):t.buf?'■'+(t.i+1):'_'+(t.i+1))+'</span>').join(' ');
 }
 
 function renderCard(t){
@@ -1866,7 +1035,7 @@ function renderCard(t){
 // ═══════════════════════════════════════════════════════════════
 function openDetail(t){
   currentTrack=t;
-  document.getElementById('tv-title').textContent='TR'+(t.i+1)+(t.name?' — '+t.name:'');
+  document.getElementById('tv-title').textContent='TR'+(t.i+1)+(t.name?(' — '+t.name):'');
   document.getElementById('tv-title').style.color=t.color;
   buildDetailView(t);
   document.getElementById('track-view').className='show';
@@ -1881,7 +1050,7 @@ function renderDetail(t){
   const br=inner.querySelector('.btn-rec');
   const bp=inner.querySelector('.btn-play');
   if(br){br.className='tbig btn-rec'+(t.recording?' armed':'');br.textContent=t.recording?'⏺ STOP':'⏺ REC';}
-  if(bp){bp.className='tbig btn-play'+(t.buf?t.playing?' playing':'':' dis');bp.textContent=t.playing?'⏸ PAUSE':'▶ PLAY';}
+  if(bp){bp.className='tbig btn-play'+(t.buf?(t.playing?' playing':''):' dis');bp.textContent=t.playing?'⏸ PAUSE':'▶ PLAY';}
 }
 
 function buildDetailView(t){
@@ -1897,19 +1066,19 @@ function buildDetailView(t){
 
   // TRANSPORT
   const tsec=document.createElement('div');tsec.className='dsec';
-  tsec.innerHTML=`<div class="dsec-title">TRANSPORT</div>
-  <div class="tbrow">
-    <button class="tbig btn-rec ${t.recording?'armed':''}">${t.recording?'⏺ STOP':'⏺ REC'}</button>
-    <button class="tbig btn-load">📂 LOAD</button>
-    <button class="tbig btn-play ${t.buf?t.playing?'playing':'':'dis'}">${t.playing?'⏸ PAUSE':'▶ PLAY'}</button>
-    <button class="tbig btn-stop">■ STOP</button>
-  </div>
-  <div class="tbrow">
-    <button class="tbig btn-loop ${t.loop?'looping':''}">∞ LOOP</button>
-    <button class="tbig btn-mute ${t.mute?'muted':''}">MUTE</button>
-    <button class="tbig btn-solo ${t.solo?'soloed':''}">SOLO</button>
-    <button class="tbig btn-clr" style="color:var(--red)">✕ CLR</button>
-  </div>`;
+  tsec.innerHTML='<div class="dsec-title">TRANSPORT</div>'
+    + '<div class="tbrow">'
+    + '<button class="tbig btn-rec '+(t.recording?'armed':'')+'">'+(t.recording?'⏺ STOP':'⏺ REC')+'</button>'
+    + '<button class="tbig btn-load">📂 LOAD</button>'
+    + '<button class="tbig btn-play '+(t.buf?(t.playing?'playing':''):'dis')+'">'+(t.playing?'⏸ PAUSE':'▶ PLAY')+'</button>'
+    + '<button class="tbig btn-stop">■ STOP</button>'
+    + '</div>'
+    + '<div class="tbrow">'
+    + '<button class="tbig btn-loop '+(t.loop?'looping':'')+'">∞ LOOP</button>'
+    + '<button class="tbig btn-mute '+(t.mute?'muted':'')+'">MUTE</button>'
+    + '<button class="tbig btn-solo '+(t.solo?'soloed':'')+'">SOLO</button>'
+    + '<button class="tbig btn-clr" style="color:var(--red)">✕ CLR</button>'
+    + '</div>';
   tsec.querySelector('.btn-rec').addEventListener('click',()=>t.recording?recStop(t):recStart(t));
   tsec.querySelector('.btn-load').addEventListener('click',()=>{ctx();fi.click();});
   tsec.querySelector('.btn-play').addEventListener('click',()=>{if(t.buf) t.playing?stopT(t):playT(t);});
@@ -1922,53 +1091,41 @@ function buildDetailView(t){
 
   // LEVELS
   const lsec=document.createElement('div');lsec.className='dsec';
-  lsec.innerHTML=`<div class="dsec-title">LEVELS</div>
-  <div class="drow"><span class="dlbl">VOLUME</span><div class="cslider" id="sl-vol-${t.i}"><div class="cslider-track"></div><div class="cslider-fill"></div><div class="cslider-thumb"></div></div><span class="dval" id="sv-vol-${t.i}">${db(t.vol)}</span></div>
-  <div class="drow"><span class="dlbl">PAN</span><div class="cslider" id="sl-pan-${t.i}"><div class="cslider-track"></div><div class="cslider-fill"></div><div class="cslider-thumb"></div></div><span class="dval" id="sv-pan-${t.i}">${panLabel(t.pan)}</span></div>
-  <div class="drow"><span class="dlbl">INPUT GAIN</span><div class="cslider" id="sl-ig-${t.i}"><div class="cslider-track"></div><div class="cslider-fill"></div><div class="cslider-thumb"></div></div><span class="dval" id="sv-ig-${t.i}">${Math.round(t.inputGain*100)}%</span></div>
-  <div class="drow"><span class="dlbl">SPEED</span><div class="cslider" id="sl-spd-${t.i}"><div class="cslider-track"></div><div class="cslider-fill"></div><div class="cslider-thumb"></div></div><span class="dval" id="sv-spd-${t.i}">${t.speed.toFixed(2)}x</span></div>`;
+  lsec.innerHTML='<div class="dsec-title">LEVELS</div>'
+    + '<div class="drow"><span class="dlbl">VOLUME</span><div class="cslider" id="sl-vol-'+t.i+'"><div class="cslider-track"></div><div class="cslider-fill"></div><div class="cslider-thumb"></div></div><span class="dval" id="sv-vol-'+t.i+'">'+db(t.vol)+'</span></div>'
+    + '<div class="drow"><span class="dlbl">PAN</span><div class="cslider" id="sl-pan-'+t.i+'"><div class="cslider-track"></div><div class="cslider-fill"></div><div class="cslider-thumb"></div></div><span class="dval" id="sv-pan-'+t.i+'">'+panLabel(t.pan)+'</span></div>'
+    + '<div class="drow"><span class="dlbl">INPUT GAIN</span><div class="cslider" id="sl-ig-'+t.i+'"><div class="cslider-track"></div><div class="cslider-fill"></div><div class="cslider-thumb"></div></div><span class="dval" id="sv-ig-'+t.i+'">'+Math.round(t.inputGain*100)+'%</span></div>'
+    + '<div class="drow"><span class="dlbl">SPEED</span><div class="cslider" id="sl-spd-'+t.i+'"><div class="cslider-track"></div><div class="cslider-fill"></div><div class="cslider-thumb"></div></div><span class="dval" id="sv-spd-'+t.i+'">'+t.speed.toFixed(2)+'x</span></div>';
   inner.appendChild(lsec);
 
   // TAPE
   const tpsec=document.createElement('div');tpsec.className='dsec';
-  tpsec.innerHTML=`<div class="dsec-title">TAPE CHARACTER</div>
-  <div class="drow"><span class="dlbl">NOISE</span><div class="cslider" id="sl-ns-${t.i}"><div class="cslider-track"></div><div class="cslider-fill"></div><div class="cslider-thumb"></div></div><span class="dval" id="sv-ns-${t.i}">${Math.round(t.noise*100)}%</span></div>
-  <div class="drow"><span class="dlbl">WOW/FLUTTER</span><div class="cslider" id="sl-wow-${t.i}"><div class="cslider-track"></div><div class="cslider-fill"></div><div class="cslider-thumb"></div></div><span class="dval" id="sv-wow-${t.i}">${Math.round(t.wow*100)}%</span></div>
-  <div class="drow"><span class="dlbl">DEGRADE</span><div class="cslider" id="sl-deg-${t.i}"><div class="cslider-track"></div><div class="cslider-fill"></div><div class="cslider-thumb"></div></div><span class="dval" id="sv-deg-${t.i}">${Math.round(t.degrade*100)}%</span></div>
-  <div class="drow"><span class="dlbl">BANDWIDTH</span><div class="cslider" id="sl-bw-${t.i}"><div class="cslider-track"></div><div class="cslider-fill"></div><div class="cslider-thumb"></div></div><span class="dval" id="sv-bw-${t.i}">${Math.round(t.bw*100)}%</span></div>`;
+  tpsec.innerHTML='<div class="dsec-title">TAPE CHARACTER</div>'
+    + '<div class="drow"><span class="dlbl">NOISE</span><div class="cslider" id="sl-ns-'+t.i+'"><div class="cslider-track"></div><div class="cslider-fill"></div><div class="cslider-thumb"></div></div><span class="dval" id="sv-ns-'+t.i+'">'+Math.round(t.noise*100)+'%</span></div>'
+    + '<div class="drow"><span class="dlbl">WOW/FLUTTER</span><div class="cslider" id="sl-wow-'+t.i+'"><div class="cslider-track"></div><div class="cslider-fill"></div><div class="cslider-thumb"></div></div><span class="dval" id="sv-wow-'+t.i+'">'+Math.round(t.wow*100)+'%</span></div>'
+    + '<div class="drow"><span class="dlbl">DEGRADE</span><div class="cslider" id="sl-deg-'+t.i+'"><div class="cslider-track"></div><div class="cslider-fill"></div><div class="cslider-thumb"></div></div><span class="dval" id="sv-deg-'+t.i+'">'+Math.round(t.degrade*100)+'%</span></div>'
+    + '<div class="drow"><span class="dlbl">BANDWIDTH</span><div class="cslider" id="sl-bw-'+t.i+'"><div class="cslider-track"></div><div class="cslider-fill"></div><div class="cslider-thumb"></div></div><span class="dval" id="sv-bw-'+t.i+'">'+Math.round(t.bw*100)+'%</span></div>';
   inner.appendChild(tpsec);
 
   // FX SENDS
   const fxsec=document.createElement('div');fxsec.className='dsec';
-  fxsec.innerHTML=`<div class="dsec-title">FX SENDS</div>
-  <div class="sends-grid">
-    <div class="send-item">
-      <span class="send-lbl tape">TAPE DLY</span>
-      <div class="cslider" id="snd-tape-${t.i}" style="width:100%;height:44px"><div class="cslider-track"></div><div class="cslider-fill tape"></div><div class="cslider-thumb"></div></div>
-      <span class="send-val tape" id="snv-tape-${t.i}">${Math.round(t.sends.tape*100)}%</span>
-    </div>
-    <div class="send-item">
-      <span class="send-lbl spring">SPRING</span>
-      <div class="cslider" id="snd-spring-${t.i}" style="width:100%;height:44px"><div class="cslider-track"></div><div class="cslider-fill spring"></div><div class="cslider-thumb"></div></div>
-      <span class="send-val spring" id="snv-spring-${t.i}">${Math.round(t.sends.spring*100)}%</span>
-    </div>
-    <div class="send-item">
-      <span class="send-lbl plate">PLATE</span>
-      <div class="cslider" id="snd-plate-${t.i}" style="width:100%;height:44px"><div class="cslider-track"></div><div class="cslider-fill plate"></div><div class="cslider-thumb"></div></div>
-      <span class="send-val plate" id="snv-plate-${t.i}">${Math.round(t.sends.plate*100)}%</span>
-    </div>
-  </div>`;
+  fxsec.innerHTML='<div class="dsec-title">FX SENDS</div>'
+    + '<div class="sends-grid">'
+    + '<div class="send-item"><span class="send-lbl tape">TAPE DLY</span><div class="cslider" id="snd-tape-'+t.i+'" style="width:100%;height:44px"><div class="cslider-track"></div><div class="cslider-fill tape"></div><div class="cslider-thumb"></div></div><span class="send-val tape" id="snv-tape-'+t.i+'">'+Math.round(t.sends.tape*100)+'%</span></div>'
+    + '<div class="send-item"><span class="send-lbl spring">SPRING</span><div class="cslider" id="snd-spring-'+t.i+'" style="width:100%;height:44px"><div class="cslider-track"></div><div class="cslider-fill spring"></div><div class="cslider-thumb"></div></div><span class="send-val spring" id="snv-spring-'+t.i+'">'+Math.round(t.sends.spring*100)+'%</span></div>'
+    + '<div class="send-item"><span class="send-lbl plate">PLATE</span><div class="cslider" id="snd-plate-'+t.i+'" style="width:100%;height:44px"><div class="cslider-track"></div><div class="cslider-fill plate"></div><div class="cslider-thumb"></div></div><span class="send-val plate" id="snv-plate-'+t.i+'">'+Math.round(t.sends.plate*100)+'%</span></div>'
+    + '</div>';
   inner.appendChild(fxsec);
 
   // EQ
   const eqsec=document.createElement('div');eqsec.className='dsec';
-  eqsec.innerHTML=`<div class="dsec-title">4-BAND EQ</div>
-  <div class="eq-grid">
-    <div class="eq-band"><div class="eq-top"><span class="eq-lbl">LO 120Hz</span><span class="eq-val" id="ev-lo-${t.i}">${(t.eq.lo>=0?'+':'')+t.eq.lo.toFixed(1)}dB</span></div><div class="cslider" id="sl-lo-${t.i}"><div class="cslider-track"></div><div class="cslider-fill"></div><div class="cslider-thumb round"></div></div></div>
-    <div class="eq-band"><div class="eq-top"><span class="eq-lbl">LO-MID 500Hz</span><span class="eq-val" id="ev-lmid-${t.i}">${(t.eq.lmid>=0?'+':'')+t.eq.lmid.toFixed(1)}dB</span></div><div class="cslider" id="sl-lmid-${t.i}"><div class="cslider-track"></div><div class="cslider-fill"></div><div class="cslider-thumb round"></div></div></div>
-    <div class="eq-band"><div class="eq-top"><span class="eq-lbl">HI-MID 3kHz</span><span class="eq-val" id="ev-hmid-${t.i}">${(t.eq.hmid>=0?'+':'')+t.eq.hmid.toFixed(1)}dB</span></div><div class="cslider" id="sl-hmid-${t.i}"><div class="cslider-track"></div><div class="cslider-fill"></div><div class="cslider-thumb round"></div></div></div>
-    <div class="eq-band"><div class="eq-top"><span class="eq-lbl">HI 10kHz</span><span class="eq-val" id="ev-hi-${t.i}">${(t.eq.hi>=0?'+':'')+t.eq.hi.toFixed(1)}dB</span></div><div class="cslider" id="sl-hi-${t.i}"><div class="cslider-track"></div><div class="cslider-fill"></div><div class="cslider-thumb round"></div></div></div>
-  </div>`;
+  eqsec.innerHTML='<div class="dsec-title">4-BAND EQ</div>'
+    + '<div class="eq-grid">'
+    + '<div class="eq-band"><div class="eq-top"><span class="eq-lbl">LO 120Hz</span><span class="eq-val" id="ev-lo-'+t.i+'">'+(t.eq.lo>=0?'+':'')+t.eq.lo.toFixed(1)+'dB</span></div><div class="cslider" id="sl-lo-'+t.i+'"><div class="cslider-track"></div><div class="cslider-fill"></div><div class="cslider-thumb round"></div></div></div>'
+    + '<div class="eq-band"><div class="eq-top"><span class="eq-lbl">LO-MID 500Hz</span><span class="eq-val" id="ev-lmid-'+t.i+'">'+(t.eq.lmid>=0?'+':'')+t.eq.lmid.toFixed(1)+'dB</span></div><div class="cslider" id="sl-lmid-'+t.i+'"><div class="cslider-track"></div><div class="cslider-fill"></div><div class="cslider-thumb round"></div></div></div>'
+    + '<div class="eq-band"><div class="eq-top"><span class="eq-lbl">HI-MID 3kHz</span><span class="eq-val" id="ev-hmid-'+t.i+'">'+(t.eq.hmid>=0?'+':'')+t.eq.hmid.toFixed(1)+'dB</span></div><div class="cslider" id="sl-hmid-'+t.i+'"><div class="cslider-track"></div><div class="cslider-fill"></div><div class="cslider-thumb round"></div></div></div>'
+    + '<div class="eq-band"><div class="eq-top"><span class="eq-lbl">HI 10kHz</span><span class="eq-val" id="ev-hi-'+t.i+'">'+(t.eq.hi>=0?'+':'')+t.eq.hi.toFixed(1)+'dB</span></div><div class="cslider" id="sl-hi-'+t.i+'"><div class="cslider-track"></div><div class="cslider-fill"></div><div class="cslider-thumb round"></div></div></div>'
+    + '</div>';
   inner.appendChild(eqsec);
 
   requestAnimationFrame(()=>{
@@ -1980,7 +1137,6 @@ function buildDetailView(t){
     makeSlider(document.getElementById('sl-wow-'+t.i),0,1,t.wow,v=>{t.wow=v;if(t.chain)t.chain.setWow(v);document.getElementById('sv-wow-'+t.i).textContent=Math.round(v*100)+'%';});
     makeSlider(document.getElementById('sl-deg-'+t.i),0,1,t.degrade,v=>{t.degrade=v;if(t.chain)t.chain.setDegrade(v);document.getElementById('sv-deg-'+t.i).textContent=Math.round(v*100)+'%';});
     makeSlider(document.getElementById('sl-bw-'+t.i),0,1,t.bw,v=>{t.bw=v;if(t.chain)t.chain.setBW(v);document.getElementById('sv-bw-'+t.i).textContent=Math.round(v*100)+'%';});
-    // FX sends
     ['tape','spring','plate'].forEach(fx=>{
       makeSlider(document.getElementById('snd-'+fx+'-'+t.i),0,1,t.sends[fx],v=>{
         t.sends[fx]=v;if(t.chain)t.chain.setSend(fx,v);
@@ -2004,14 +1160,14 @@ const scroll=document.getElementById('scroll');
 T.forEach(t=>{
   const card=document.createElement('div');
   card.id='c'+t.i; card.className='card';
-  card.innerHTML=`<div class="card-row">
-    <span class="tnum" style="color:${t.color}">TR${t.i+1}</span>
-    <span class="tname">no tape</span>
-    <span class="tpan"></span>
-    <div class="tvrow" id="tv${t.i}">${Array.from({length:10}).map(()=>'<div class="vs"></div>').join('')}</div>
-    <div class="tstat"></div>
-    <span style="font-size:14px;color:var(--txt3);margin-left:4px">›</span>
-  </div>`;
+  card.innerHTML='<div class="card-row">'
+    + '<span class="tnum" style="color:'+t.color+'">TR'+(t.i+1)+'</span>'
+    + '<span class="tname">no tape</span>'
+    + '<span class="tpan"></span>'
+    + '<div class="tvrow" id="tv'+t.i+'">'+Array.from({length:10}).map(()=>'<div class="vs"></div>').join('')+'</div>'
+    + '<div class="tstat"></div>'
+    + '<span style="font-size:14px;color:var(--txt3);margin-left:4px">›</span>'
+    + '</div>';
   card.addEventListener('click',()=>openDetail(t));
   scroll.appendChild(card);
 });
@@ -2029,7 +1185,7 @@ T.forEach(t=>{
     if(activeSlider)return;
     const dy=startY-e.touches[0].clientY;
     scrollTop=Math.max(0,Math.min(maxScroll,startTop+dy));
-    el.style.transform=`translateY(-${scrollTop}px)`;
+    el.style.transform='translateY(-'+scrollTop+'px)';
     e.preventDefault();
   },{passive:false});
   window.addEventListener('resize',()=>{scrollTop=0;el.style.transform='translateY(0)';setTimeout(updateMax,200);});
@@ -2049,7 +1205,7 @@ function initTVScroll(){
     if(activeSlider)return;
     const dy=startY-e.touches[0].clientY;
     tvScrollTop=Math.max(0,Math.min(maxScroll,startTop+dy));
-    el.style.transform=`translateY(-${tvScrollTop}px)`;
+    el.style.transform='translateY(-'+tvScrollTop+'px)';
     e.preventDefault();
   },{passive:false});
 }
@@ -2068,7 +1224,7 @@ function initFXScroll(){
     if(activeSlider)return;
     const dy=startY-e.touches[0].clientY;
     fxScrollTop=Math.max(0,Math.min(maxScroll,startTop+dy));
-    el.style.transform=`translateY(-${fxScrollTop}px)`;
+    el.style.transform='translateY(-'+fxScrollTop+'px)';
     e.preventDefault();
   },{passive:false});
 }
@@ -2081,10 +1237,9 @@ gSliders.wow     = makeSlider(document.getElementById('gs-wow'),    0,1,G.wow,  
 gSliders.degrade = makeSlider(document.getElementById('gs-degrade'),0,1,G.degrade, v=>{G.degrade=v;document.getElementById('vd').textContent=Math.round(v*100)+'%';applyGlobalTape();});
 gSliders.bw      = makeSlider(document.getElementById('gs-bw'),     0,1,G.bw,      v=>{G.bw=v;     document.getElementById('vb').textContent=Math.round(v*100)+'%';applyGlobalTape();});
 
-// FX return sliders
 makeSlider(document.getElementById('rtn-tape'),   0,1,FX.tape.return,   v=>{FX.tape.return=v;   if(tapeProc)   tapeProc.setReturn(v);   document.getElementById('rv-tape').textContent=Math.round(v*100)+'%';});
 makeSlider(document.getElementById('rtn-spring'), 0,1,FX.spring.return, v=>{FX.spring.return=v; if(springProc) springProc.setReturn(v); document.getElementById('rv-spring').textContent=Math.round(v*100)+'%';});
-makeSlider(document.getElementById('rtn-plate'),0,1,FX.plate.return,v=>{FX.plate.return=v;if(plateProc)plateProc.setReturn(v);document.getElementById('rv-plate').textContent=Math.round(v*100)+'%';});
+makeSlider(document.getElementById('rtn-plate'),  0,1,FX.plate.return,  v=>{FX.plate.return=v;  if(plateProc)  plateProc.setReturn(v);  document.getElementById('rv-plate').textContent=Math.round(v*100)+'%';});
 
 // ═══════════════════════════════════════════════════════════════
 //  MASTER CONTROLS
@@ -2099,6 +1254,7 @@ document.getElementById('btn-bounce').addEventListener('click',showBounce);
 document.getElementById('tv-back').addEventListener('click',closeDetail);
 
 dots();
+
 </script>
 </body>
 </html>
