@@ -357,9 +357,9 @@ let tapeBus = null, springBus = null, plateBus = null;
 let tapeProc = null, springProc = null, plateProc = null;
 
 const FX = {
-  tape:   { time:0.35, feedback:0.45, tone:0.6, wow:0.3, return:0.75 },
-  spring: { decay:0.65, tone:0.55, diffusion:0.6, tension:0.5, predelay:0.01, return:0.75 },
-  plate:  { size:0.7, decay:0.6, damp:0.4, predelay:0.02, return:0.75 }
+  tape:   { time:0.35, feedback:0.45, tone:0.6, wow:0.3, toRvb:0, return:0.75 },
+  spring: { decay:0.7, tone:0.55, diffusion:0.6, tension:0.5, predelay:0.01, return:1.3 },
+  plate:  { size:0.75, decay:0.65, damp:0.35, predelay:0.02, return:1.3 }
 };
 
 const T = Array.from({length:N}, (_, i) => ({
@@ -424,12 +424,25 @@ function buildTapeDelay(c) {
   sat.connect(output);
   output.connect(masterGain);
 
+  // Send delay repeats to spring/plate reverb busses
+  const toRvbGain = c.createGain(); toRvbGain.gain.value = FX.tape.toRvb;
+  sat.connect(toRvbGain);
+
   return {
-    input, output, delay, fbGain, fbLP, wowDepth, flDepth,
+    input, output, delay, fbGain, fbLP, wowDepth, flDepth, toRvbGain,
     setTime: v => { delay.delayTime.value = v; },
     setFeedback: v => { fbGain.gain.value = Math.min(0.95, v); },
     setTone: v => { fbLP.frequency.value = 1000 + v * 12000; },
     setWow: v => { wowDepth.gain.value = v*0.015; flDepth.gain.value = v*0.002; },
+    setToReverb: v => {
+      FX.tape.toRvb = v;
+      toRvbGain.gain.value = v;
+      // (re)connect to current reverb busses
+      try { toRvbGain.disconnect(); } catch(e) {}
+      toRvbGain.gain.value = v;
+      if (springBus) toRvbGain.connect(springBus);
+      if (plateBus)  toRvbGain.connect(plateBus);
+    },
     setReturn: v => { output.gain.value = v; }
   };
 }
@@ -438,24 +451,25 @@ function buildTapeDelay(c) {
 //  SPRING REVERB FX
 // ═══════════════════════════════════════════════════════════════
 function buildSpringReverb(c) {
-  const input   = c.createGain(); input.gain.value = 1;
+  const input   = c.createGain(); input.gain.value = 1.4;
   const output  = c.createGain(); output.gain.value = FX.spring.return;
+  const makeup  = c.createGain(); makeup.gain.value = 2.2;
 
   const preDly  = c.createDelay(0.2); preDly.delayTime.value = FX.spring.predelay;
   input.connect(preDly);
 
   const combData = [
-    {t:0.02987, fb:0.855}, {t:0.03671, fb:0.841},
-    {t:0.04110, fb:0.829}, {t:0.04373, fb:0.818},
-    {t:0.05120, fb:0.805}, {t:0.05590, fb:0.795}
+    {t:0.02987, fb:0.91}, {t:0.03671, fb:0.90},
+    {t:0.04110, fb:0.895},{t:0.04373, fb:0.89},
+    {t:0.05120, fb:0.885},{t:0.05590, fb:0.88}
   ];
-  const combMix  = c.createGain(); combMix.gain.value = 1/combData.length;
+  const combMix  = c.createGain(); combMix.gain.value = 1.6/combData.length;
   const combFBGs = [];
   const combLPs  = [];
 
   combData.forEach(({t, fb}) => {
     const dly = c.createDelay(0.5); dly.delayTime.value = t;
-    const fbg = c.createGain(); fbg.gain.value = fb * FX.spring.decay;
+    const fbg = c.createGain(); fbg.gain.value = Math.min(0.97, fb * FX.spring.decay);
     const lp  = c.createBiquadFilter(); lp.type='lowpass';
     lp.frequency.value = 800 + FX.spring.tone * 9000;
     const hp  = c.createBiquadFilter(); hp.type='highpass'; hp.frequency.value=60;
@@ -467,7 +481,7 @@ function buildSpringReverb(c) {
   });
 
   const apTimes = [0.00476, 0.01084, 0.01699, 0.00894];
-  const apGains = [0.61, 0.61, 0.61, 0.61];
+  const apGains = [0.7, 0.7, 0.7, 0.7];
   const apFBGs  = [];
   let apChain   = combMix;
   apTimes.forEach((t, i) => {
@@ -479,7 +493,7 @@ function buildSpringReverb(c) {
   });
 
   const tensionLFO = c.createOscillator(); tensionLFO.frequency.value = 0.3 + FX.spring.tension * 2;
-  const tensionD   = c.createGain(); tensionD.gain.value = FX.spring.tension * 0.003;
+  const tensionD   = c.createGain(); tensionD.gain.value = FX.spring.tension * 0.005;
   const tensionDly = c.createDelay(0.05); tensionDly.delayTime.value = 0.01;
   const tensionDC  = c.createConstantSource(); tensionDC.offset.value = 0.01;
   tensionLFO.connect(tensionD); tensionD.connect(tensionDly.delayTime);
@@ -487,24 +501,25 @@ function buildSpringReverb(c) {
   tensionLFO.start(); tensionDC.start();
   apChain.connect(tensionDly);
 
-  const boing1 = c.createBiquadFilter(); boing1.type='bandpass'; boing1.frequency.value=420; boing1.Q.value=8;
-  const boing2 = c.createBiquadFilter(); boing2.type='bandpass'; boing2.frequency.value=1100; boing2.Q.value=5;
-  const boingG1 = c.createGain(); boingG1.gain.value=0.18;
-  const boingG2 = c.createGain(); boingG2.gain.value=0.10;
+  const boing1 = c.createBiquadFilter(); boing1.type='bandpass'; boing1.frequency.value=420; boing1.Q.value=9;
+  const boing2 = c.createBiquadFilter(); boing2.type='bandpass'; boing2.frequency.value=1100; boing2.Q.value=6;
+  const boingG1 = c.createGain(); boingG1.gain.value=0.4;
+  const boingG2 = c.createGain(); boingG2.gain.value=0.25;
   tensionDly.connect(boing1); boing1.connect(boingG1);
   tensionDly.connect(boing2); boing2.connect(boingG2);
 
-  tensionDly.connect(output);
-  boingG1.connect(output);
-  boingG2.connect(output);
+  tensionDly.connect(makeup);
+  boingG1.connect(makeup);
+  boingG2.connect(makeup);
+  makeup.connect(output);
   output.connect(masterGain);
 
   return {
-    input, output, combFBGs, combLPs, apFBGs, boing1, boing2, boingG1, boingG2, tensionLFO, tensionD,
-    setDecay:     v => { combFBGs.forEach((g,i)=>{ g.gain.value=combData[i].fb*v; }); },
+    input, output, makeup, combFBGs, combLPs, apFBGs, boing1, boing2, boingG1, boingG2, tensionLFO, tensionD,
+    setDecay:     v => { combFBGs.forEach((g,i)=>{ g.gain.value=Math.min(0.97, combData[i].fb*v); }); },
     setTone:      v => { combLPs.forEach(lp=>{ lp.frequency.value=800+v*9000; }); },
-    setDiffusion: v => { apFBGs.forEach(g=>{ g.gain.value=0.3+v*0.55; }); },
-    setTension:   v => { tensionLFO.frequency.value=0.2+v*3; tensionD.gain.value=v*0.004; },
+    setDiffusion: v => { apFBGs.forEach(g=>{ g.gain.value=0.4+v*0.58; }); },
+    setTension:   v => { tensionLFO.frequency.value=0.2+v*3; tensionD.gain.value=v*0.006; boingG1.gain.value=0.15+v*0.35; boingG2.gain.value=0.1+v*0.25; },
     setPreDelay:  v => { preDly.delayTime.value=v; },
     setReturn:    v => { output.gain.value=v; }
   };
@@ -514,15 +529,16 @@ function buildSpringReverb(c) {
 //  PLATE REVERB FX (Dattorro-inspired figure-8)
 // ═══════════════════════════════════════════════════════════════
 function buildPlateReverb(c) {
-  const input  = c.createGain(); input.gain.value = 1;
+  const input  = c.createGain(); input.gain.value = 1.4;
   const output = c.createGain(); output.gain.value = FX.plate.return;
+  const makeup = c.createGain(); makeup.gain.value = 2.0;
 
   const preDly = c.createDelay(0.2); preDly.delayTime.value = FX.plate.predelay;
   input.connect(preDly);
 
   const inAP = [
-    {t:0.004771,g:0.75}, {t:0.003595,g:0.75},
-    {t:0.012735,g:0.625},{t:0.009307,g:0.625}
+    {t:0.004771,g:0.82}, {t:0.003595,g:0.82},
+    {t:0.012735,g:0.7},{t:0.009307,g:0.7}
   ];
   let diffChain = preDly;
   const inAPGs = [];
@@ -536,24 +552,24 @@ function buildPlateReverb(c) {
 
   // Left loop
   const apL1d = c.createDelay(0.1);  apL1d.delayTime.value = 0.030509;
-  const apL1g = c.createGain();       apL1g.gain.value = 0.7;
+  const apL1g = c.createGain();       apL1g.gain.value = 0.78;
   const dL1   = c.createDelay(0.5);  dL1.delayTime.value   = 0.149625 * (0.5+FX.plate.size*0.8);
   const dampL = c.createBiquadFilter(); dampL.type='lowpass';
   dampL.frequency.value = 12000 - FX.plate.damp * 10000;
-  const decayL= c.createGain();       decayL.gain.value = FX.plate.decay * 0.88;
+  const decayL= c.createGain();       decayL.gain.value = Math.min(0.97, FX.plate.decay * 0.97);
   const apL2d = c.createDelay(0.1);  apL2d.delayTime.value = 0.060481;
-  const apL2g = c.createGain();       apL2g.gain.value = 0.7;
+  const apL2g = c.createGain();       apL2g.gain.value = 0.78;
   const dL2   = c.createDelay(0.5);  dL2.delayTime.value   = 0.124966 * (0.5+FX.plate.size*0.8);
 
   // Right loop
   const apR1d = c.createDelay(0.1);  apR1d.delayTime.value = 0.022904;
-  const apR1g = c.createGain();       apR1g.gain.value = 0.7;
+  const apR1g = c.createGain();       apR1g.gain.value = 0.78;
   const dR1   = c.createDelay(0.5);  dR1.delayTime.value   = 0.141695 * (0.5+FX.plate.size*0.8);
   const dampR = c.createBiquadFilter(); dampR.type='lowpass';
   dampR.frequency.value = 12000 - FX.plate.damp * 10000;
-  const decayR= c.createGain();       decayR.gain.value = FX.plate.decay * 0.88;
+  const decayR= c.createGain();       decayR.gain.value = Math.min(0.97, FX.plate.decay * 0.97);
   const apR2d = c.createDelay(0.1);  apR2d.delayTime.value = 0.089244;
-  const apR2g = c.createGain();       apR2g.gain.value = 0.7;
+  const apR2g = c.createGain();       apR2g.gain.value = 0.78;
   const dR2   = c.createDelay(0.5);  dR2.delayTime.value   = 0.106280 * (0.5+FX.plate.size*0.8);
 
   diffChain.connect(apL1d); apL1d.connect(apL1g);
@@ -568,12 +584,13 @@ function buildPlateReverb(c) {
   dL2.connect(apR1d);
   dR2.connect(apL1d);
 
-  const outL = c.createGain(); outL.gain.value = 0.25;
-  const outR = c.createGain(); outR.gain.value = 0.25;
+  const outL = c.createGain(); outL.gain.value = 0.4;
+  const outR = c.createGain(); outR.gain.value = 0.4;
   dL1.connect(outL); dL2.connect(outL);
   dR1.connect(outR); dR2.connect(outR);
-  outL.connect(output);
-  outR.connect(output);
+  outL.connect(makeup);
+  outR.connect(makeup);
+  makeup.connect(output);
   output.connect(masterGain);
 
   const modLFO1 = c.createOscillator(); modLFO1.frequency.value=0.51;
@@ -587,7 +604,7 @@ function buildPlateReverb(c) {
   modLFO1.start(); modLFO2.start(); modDC1.start(); modDC2.start();
 
   return {
-    input, output, dampL, dampR, decayL, decayR, inAPGs,
+    input, output, makeup, dampL, dampR, decayL, decayR, inAPGs,
     dL1, dL2, dR1, dR2, modD1, modD2,
     setSize: v => {
       [dL1,dL2,dR1,dR2].forEach((d,i)=>{
@@ -595,7 +612,7 @@ function buildPlateReverb(c) {
         d.delayTime.value=base*(0.5+v*0.8);
       });
     },
-    setDecay: v => { decayL.gain.value=v*0.88; decayR.gain.value=v*0.88; },
+    setDecay: v => { decayL.gain.value=Math.min(0.97,v*0.97); decayR.gain.value=Math.min(0.97,v*0.97); },
     setDamp:  v => {
       const f=12000-v*10000;
       dampL.frequency.value=f; dampR.frequency.value=f;
@@ -613,6 +630,8 @@ function initFX() {
   tapeBus    = tapeProc.input;
   springBus  = springProc.input;
   plateBus   = plateProc.input;
+  // Now that reverb busses exist, wire tape delay's reverb send
+  tapeProc.setToReverb(FX.tape.toRvb);
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -812,13 +831,15 @@ function buildFXPanel(type) {
       + '<div class="drow"><span class="dlbl">DELAY TIME</span><div class="cslider" id="fxp-time"><div class="cslider-track"></div><div class="cslider-fill tape"></div><div class="cslider-thumb"></div></div><span class="dval" id="fxv-time">'+FX.tape.time.toFixed(2)+'s</span></div>'
       + '<div class="drow"><span class="dlbl">FEEDBACK</span><div class="cslider" id="fxp-fb"><div class="cslider-track"></div><div class="cslider-fill tape"></div><div class="cslider-thumb"></div></div><span class="dval" id="fxv-fb">'+Math.round(FX.tape.feedback*100)+'%</span></div>'
       + '<div class="drow"><span class="dlbl">TONE</span><div class="cslider" id="fxp-tone"><div class="cslider-track"></div><div class="cslider-fill tape"></div><div class="cslider-thumb"></div></div><span class="dval" id="fxv-tone">'+Math.round(FX.tape.tone*100)+'%</span></div>'
-      + '<div class="drow"><span class="dlbl">WOW</span><div class="cslider" id="fxp-wow"><div class="cslider-track"></div><div class="cslider-fill tape"></div><div class="cslider-thumb"></div></div><span class="dval" id="fxv-wow">'+Math.round(FX.tape.wow*100)+'%</span></div>';
+      + '<div class="drow"><span class="dlbl">WOW</span><div class="cslider" id="fxp-wow"><div class="cslider-track"></div><div class="cslider-fill tape"></div><div class="cslider-thumb"></div></div><span class="dval" id="fxv-wow">'+Math.round(FX.tape.wow*100)+'%</span></div>'
+      + '<div class="drow"><span class="dlbl">TO REVERB</span><div class="cslider" id="fxp-trvb"><div class="cslider-track"></div><div class="cslider-fill tape"></div><div class="cslider-thumb"></div></div><span class="dval" id="fxv-trvb">'+Math.round(FX.tape.toRvb*100)+'%</span></div>';
     inner.appendChild(sec);
     requestAnimationFrame(() => {
       makeSlider(document.getElementById('fxp-time'), 0.05, 2.0, FX.tape.time, v => { FX.tape.time=v; if(tapeProc) tapeProc.setTime(v); document.getElementById('fxv-time').textContent=v.toFixed(2)+'s'; });
       makeSlider(document.getElementById('fxp-fb'),   0, 0.95, FX.tape.feedback, v => { FX.tape.feedback=v; if(tapeProc) tapeProc.setFeedback(v); document.getElementById('fxv-fb').textContent=Math.round(v*100)+'%'; });
       makeSlider(document.getElementById('fxp-tone'), 0, 1, FX.tape.tone, v => { FX.tape.tone=v; if(tapeProc) tapeProc.setTone(v); document.getElementById('fxv-tone').textContent=Math.round(v*100)+'%'; });
       makeSlider(document.getElementById('fxp-wow'),  0, 1, FX.tape.wow, v => { FX.tape.wow=v; if(tapeProc) tapeProc.setWow(v); document.getElementById('fxv-wow').textContent=Math.round(v*100)+'%'; });
+      makeSlider(document.getElementById('fxp-trvb'), 0, 1, FX.tape.toRvb, v => { if(tapeProc) tapeProc.setToReverb(v); document.getElementById('fxv-trvb').textContent=Math.round(v*100)+'%'; });
     });
   } else if (type === 'spring') {
     sec.innerHTML = '<div class="dsec-title">SPRING REVERB PARAMETERS</div>'
@@ -829,7 +850,7 @@ function buildFXPanel(type) {
       + '<div class="drow"><span class="dlbl">PRE-DELAY</span><div class="cslider" id="fxp-spre"><div class="cslider-track"></div><div class="cslider-fill spring"></div><div class="cslider-thumb"></div></div><span class="dval" id="fxv-spre">'+Math.round(FX.spring.predelay*1000)+'ms</span></div>';
     inner.appendChild(sec);
     requestAnimationFrame(() => {
-      makeSlider(document.getElementById('fxp-dec'),  0, 0.95, FX.spring.decay,     v => { FX.spring.decay=v;      if(springProc) springProc.setDecay(v);     document.getElementById('fxv-dec').textContent=Math.round(v*100)+'%'; });
+      makeSlider(document.getElementById('fxp-dec'),  0, 0.99, FX.spring.decay,     v => { FX.spring.decay=v;      if(springProc) springProc.setDecay(v);     document.getElementById('fxv-dec').textContent=Math.round(v*100)+'%'; });
       makeSlider(document.getElementById('fxp-ston'), 0, 1,    FX.spring.tone,      v => { FX.spring.tone=v;       if(springProc) springProc.setTone(v);      document.getElementById('fxv-ston').textContent=Math.round(v*100)+'%'; });
       makeSlider(document.getElementById('fxp-sdif'), 0, 1,    FX.spring.diffusion, v => { FX.spring.diffusion=v;  if(springProc) springProc.setDiffusion(v); document.getElementById('fxv-sdif').textContent=Math.round(v*100)+'%'; });
       makeSlider(document.getElementById('fxp-sten'), 0, 1,    FX.spring.tension,   v => { FX.spring.tension=v;    if(springProc) springProc.setTension(v);   document.getElementById('fxv-sten').textContent=Math.round(v*100)+'%'; });
@@ -844,7 +865,7 @@ function buildFXPanel(type) {
     inner.appendChild(sec);
     requestAnimationFrame(() => {
       makeSlider(document.getElementById('fxp-psz'),  0, 1,   FX.plate.size,      v=>{FX.plate.size=v;      if(plateProc) plateProc.setSize(v);      document.getElementById('fxv-psz').textContent=Math.round(v*100)+'%';});
-      makeSlider(document.getElementById('fxp-pdec'), 0, 0.95,FX.plate.decay,     v=>{FX.plate.decay=v;     if(plateProc) plateProc.setDecay(v);     document.getElementById('fxv-pdec').textContent=Math.round(v*100)+'%';});
+      makeSlider(document.getElementById('fxp-pdec'), 0, 0.99,FX.plate.decay,     v=>{FX.plate.decay=v;     if(plateProc) plateProc.setDecay(v);     document.getElementById('fxv-pdec').textContent=Math.round(v*100)+'%';});
       makeSlider(document.getElementById('fxp-pdmp'), 0, 1,   FX.plate.damp,      v=>{FX.plate.damp=v;      if(plateProc) plateProc.setDamp(v);      document.getElementById('fxv-pdmp').textContent=Math.round(v*100)+'%';});
       makeSlider(document.getElementById('fxp-ppre'), 0, 0.1, FX.plate.predelay,  v=>{FX.plate.predelay=v;  if(plateProc) plateProc.setPreDelay(v);  document.getElementById('fxv-ppre').textContent=Math.round(v*1000)+'ms';});
     });
@@ -1237,9 +1258,9 @@ gSliders.wow     = makeSlider(document.getElementById('gs-wow'),    0,1,G.wow,  
 gSliders.degrade = makeSlider(document.getElementById('gs-degrade'),0,1,G.degrade, v=>{G.degrade=v;document.getElementById('vd').textContent=Math.round(v*100)+'%';applyGlobalTape();});
 gSliders.bw      = makeSlider(document.getElementById('gs-bw'),     0,1,G.bw,      v=>{G.bw=v;     document.getElementById('vb').textContent=Math.round(v*100)+'%';applyGlobalTape();});
 
-makeSlider(document.getElementById('rtn-tape'),   0,1,FX.tape.return,   v=>{FX.tape.return=v;   if(tapeProc)   tapeProc.setReturn(v);   document.getElementById('rv-tape').textContent=Math.round(v*100)+'%';});
-makeSlider(document.getElementById('rtn-spring'), 0,1,FX.spring.return, v=>{FX.spring.return=v; if(springProc) springProc.setReturn(v); document.getElementById('rv-spring').textContent=Math.round(v*100)+'%';});
-makeSlider(document.getElementById('rtn-plate'),  0,1,FX.plate.return,  v=>{FX.plate.return=v;  if(plateProc)  plateProc.setReturn(v);  document.getElementById('rv-plate').textContent=Math.round(v*100)+'%';});
+makeSlider(document.getElementById('rtn-tape'),   0,1.5,FX.tape.return,   v=>{FX.tape.return=v;   if(tapeProc)   tapeProc.setReturn(v);   document.getElementById('rv-tape').textContent=Math.round(v*100)+'%';});
+makeSlider(document.getElementById('rtn-spring'), 0,1.5,FX.spring.return, v=>{FX.spring.return=v; if(springProc) springProc.setReturn(v); document.getElementById('rv-spring').textContent=Math.round(v*100)+'%';});
+makeSlider(document.getElementById('rtn-plate'),  0,1.5,FX.plate.return,  v=>{FX.plate.return=v;  if(plateProc)  plateProc.setReturn(v);  document.getElementById('rv-plate').textContent=Math.round(v*100)+'%';});
 
 // ═══════════════════════════════════════════════════════════════
 //  MASTER CONTROLS
@@ -1254,6 +1275,7 @@ document.getElementById('btn-bounce').addEventListener('click',showBounce);
 document.getElementById('tv-back').addEventListener('click',closeDetail);
 
 dots();
+
 
 </script>
 </body>
