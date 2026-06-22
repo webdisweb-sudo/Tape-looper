@@ -357,9 +357,9 @@ let tapeBus = null, springBus = null, plateBus = null;
 let tapeProc = null, springProc = null, plateProc = null;
 
 const FX = {
-  tape:   { time:0.35, feedback:0.45, tone:0.6, wow:0.3, toRvb:0, return:0.75 },
-  spring: { decay:0.7, tone:0.55, diffusion:0.6, tension:0.5, predelay:0.01, return:1.3 },
-  plate:  { size:0.75, decay:0.65, damp:0.35, predelay:0.02, return:1.3 }
+  tape:   { time:0.35, feedback:0.45, tone:0.6, wow:0.3, toRvb:0, return:0.75, eq:{lo:0,lmid:0,hmid:0,hi:0} },
+  spring: { decay:0.7, tone:0.55, diffusion:0.6, tension:0.5, predelay:0.01, return:1.3, eq:{lo:0,lmid:0,hmid:0,hi:0} },
+  plate:  { size:0.75, decay:0.65, damp:0.35, predelay:0.02, return:1.3, eq:{lo:0,lmid:0,hmid:0,hi:0} }
 };
 
 const T = Array.from({length:N}, (_, i) => ({
@@ -394,6 +394,23 @@ function ctx() {
 // ═══════════════════════════════════════════════════════════════
 //  TAPE DELAY FX
 // ═══════════════════════════════════════════════════════════════
+function make4BandEQ(c) {
+  const lo  = c.createBiquadFilter(); lo.type='lowshelf';  lo.frequency.value=120;  lo.gain.value=0;
+  const lm  = c.createBiquadFilter(); lm.type='peaking';   lm.frequency.value=500;  lm.Q.value=1.2; lm.gain.value=0;
+  const hm  = c.createBiquadFilter(); hm.type='peaking';   hm.frequency.value=3000; hm.Q.value=1.2; hm.gain.value=0;
+  const hi  = c.createBiquadFilter(); hi.type='highshelf'; hi.frequency.value=10000;hi.gain.value=0;
+  lo.connect(lm); lm.connect(hm); hm.connect(hi);
+  return {
+    input: lo, output: hi, lo, lm, hm, hi,
+    setBand: (band, v) => {
+      if (band==='lo') lo.gain.value=v;
+      else if (band==='lmid') lm.gain.value=v;
+      else if (band==='hmid') hm.gain.value=v;
+      else if (band==='hi') hi.gain.value=v;
+    }
+  };
+}
+
 function buildTapeDelay(c) {
   const input  = c.createGain();
   const output = c.createGain(); output.gain.value = FX.tape.return;
@@ -421,7 +438,10 @@ function buildTapeDelay(c) {
   input.connect(delay);
   delay.connect(fbHP); fbHP.connect(fbLP); fbLP.connect(sat);
   sat.connect(fbGain); fbGain.connect(delay);
-  sat.connect(output);
+
+  const eq = make4BandEQ(c);
+  sat.connect(eq.input);
+  eq.output.connect(output);
   output.connect(masterGain);
 
   // Send delay repeats to spring/plate reverb busses
@@ -429,11 +449,12 @@ function buildTapeDelay(c) {
   sat.connect(toRvbGain);
 
   return {
-    input, output, delay, fbGain, fbLP, wowDepth, flDepth, toRvbGain,
+    input, output, delay, fbGain, fbLP, wowDepth, flDepth, toRvbGain, eq,
     setTime: v => { delay.delayTime.value = v; },
     setFeedback: v => { fbGain.gain.value = Math.min(0.95, v); },
     setTone: v => { fbLP.frequency.value = 1000 + v * 12000; },
     setWow: v => { wowDepth.gain.value = v*0.015; flDepth.gain.value = v*0.002; },
+    setEQ: (band, v) => { eq.setBand(band, v); },
     setToReverb: v => {
       FX.tape.toRvb = v;
       toRvbGain.gain.value = v;
@@ -511,16 +532,19 @@ function buildSpringReverb(c) {
   tensionDly.connect(makeup);
   boingG1.connect(makeup);
   boingG2.connect(makeup);
-  makeup.connect(output);
+  const eq = make4BandEQ(c);
+  makeup.connect(eq.input);
+  eq.output.connect(output);
   output.connect(masterGain);
 
   return {
-    input, output, makeup, combFBGs, combLPs, apFBGs, boing1, boing2, boingG1, boingG2, tensionLFO, tensionD,
+    input, output, makeup, eq, combFBGs, combLPs, apFBGs, boing1, boing2, boingG1, boingG2, tensionLFO, tensionD,
     setDecay:     v => { combFBGs.forEach((g,i)=>{ g.gain.value=Math.min(0.97, combData[i].fb*v); }); },
     setTone:      v => { combLPs.forEach(lp=>{ lp.frequency.value=800+v*9000; }); },
     setDiffusion: v => { apFBGs.forEach(g=>{ g.gain.value=0.4+v*0.58; }); },
     setTension:   v => { tensionLFO.frequency.value=0.2+v*3; tensionD.gain.value=v*0.006; boingG1.gain.value=0.15+v*0.35; boingG2.gain.value=0.1+v*0.25; },
     setPreDelay:  v => { preDly.delayTime.value=v; },
+    setEQ: (band, v) => { eq.setBand(band, v); },
     setReturn:    v => { output.gain.value=v; }
   };
 }
@@ -590,7 +614,9 @@ function buildPlateReverb(c) {
   dR1.connect(outR); dR2.connect(outR);
   outL.connect(makeup);
   outR.connect(makeup);
-  makeup.connect(output);
+  const eq = make4BandEQ(c);
+  makeup.connect(eq.input);
+  eq.output.connect(output);
   output.connect(masterGain);
 
   const modLFO1 = c.createOscillator(); modLFO1.frequency.value=0.51;
@@ -604,7 +630,7 @@ function buildPlateReverb(c) {
   modLFO1.start(); modLFO2.start(); modDC1.start(); modDC2.start();
 
   return {
-    input, output, makeup, dampL, dampR, decayL, decayR, inAPGs,
+    input, output, makeup, eq, dampL, dampR, decayL, decayR, inAPGs,
     dL1, dL2, dR1, dR2, modD1, modD2,
     setSize: v => {
       [dL1,dL2,dR1,dR2].forEach((d,i)=>{
@@ -618,6 +644,7 @@ function buildPlateReverb(c) {
       dampL.frequency.value=f; dampR.frequency.value=f;
     },
     setPreDelay: v => { preDly.delayTime.value=v; },
+    setEQ: (band, v) => { eq.setBand(band, v); },
     setReturn:   v => { output.gain.value=v; }
   };
 }
@@ -834,12 +861,24 @@ function buildFXPanel(type) {
       + '<div class="drow"><span class="dlbl">WOW</span><div class="cslider" id="fxp-wow"><div class="cslider-track"></div><div class="cslider-fill tape"></div><div class="cslider-thumb"></div></div><span class="dval" id="fxv-wow">'+Math.round(FX.tape.wow*100)+'%</span></div>'
       + '<div class="drow"><span class="dlbl">TO REVERB</span><div class="cslider" id="fxp-trvb"><div class="cslider-track"></div><div class="cslider-fill tape"></div><div class="cslider-thumb"></div></div><span class="dval" id="fxv-trvb">'+Math.round(FX.tape.toRvb*100)+'%</span></div>';
     inner.appendChild(sec);
+    const eqsec1 = document.createElement('div'); eqsec1.className='dsec';
+    eqsec1.innerHTML = '<div class="dsec-title">RETURN EQ</div><div class="eq-grid">'
+      + '<div class="eq-band"><div class="eq-top"><span class="eq-lbl">LO 120Hz</span><span class="eq-val" id="fev-tlo">'+(FX.tape.eq.lo>=0?'+':'')+FX.tape.eq.lo.toFixed(1)+'dB</span></div><div class="cslider" id="feq-tlo"><div class="cslider-track"></div><div class="cslider-fill tape"></div><div class="cslider-thumb round"></div></div></div>'
+      + '<div class="eq-band"><div class="eq-top"><span class="eq-lbl">LO-MID 500Hz</span><span class="eq-val" id="fev-tlm">'+(FX.tape.eq.lmid>=0?'+':'')+FX.tape.eq.lmid.toFixed(1)+'dB</span></div><div class="cslider" id="feq-tlm"><div class="cslider-track"></div><div class="cslider-fill tape"></div><div class="cslider-thumb round"></div></div></div>'
+      + '<div class="eq-band"><div class="eq-top"><span class="eq-lbl">HI-MID 3kHz</span><span class="eq-val" id="fev-thm">'+(FX.tape.eq.hmid>=0?'+':'')+FX.tape.eq.hmid.toFixed(1)+'dB</span></div><div class="cslider" id="feq-thm"><div class="cslider-track"></div><div class="cslider-fill tape"></div><div class="cslider-thumb round"></div></div></div>'
+      + '<div class="eq-band"><div class="eq-top"><span class="eq-lbl">HI 10kHz</span><span class="eq-val" id="fev-thi">'+(FX.tape.eq.hi>=0?'+':'')+FX.tape.eq.hi.toFixed(1)+'dB</span></div><div class="cslider" id="feq-thi"><div class="cslider-track"></div><div class="cslider-fill tape"></div><div class="cslider-thumb round"></div></div></div>'
+      + '</div>';
+    inner.appendChild(eqsec1);
     requestAnimationFrame(() => {
       makeSlider(document.getElementById('fxp-time'), 0.05, 2.0, FX.tape.time, v => { FX.tape.time=v; if(tapeProc) tapeProc.setTime(v); document.getElementById('fxv-time').textContent=v.toFixed(2)+'s'; });
       makeSlider(document.getElementById('fxp-fb'),   0, 0.95, FX.tape.feedback, v => { FX.tape.feedback=v; if(tapeProc) tapeProc.setFeedback(v); document.getElementById('fxv-fb').textContent=Math.round(v*100)+'%'; });
       makeSlider(document.getElementById('fxp-tone'), 0, 1, FX.tape.tone, v => { FX.tape.tone=v; if(tapeProc) tapeProc.setTone(v); document.getElementById('fxv-tone').textContent=Math.round(v*100)+'%'; });
       makeSlider(document.getElementById('fxp-wow'),  0, 1, FX.tape.wow, v => { FX.tape.wow=v; if(tapeProc) tapeProc.setWow(v); document.getElementById('fxv-wow').textContent=Math.round(v*100)+'%'; });
       makeSlider(document.getElementById('fxp-trvb'), 0, 1, FX.tape.toRvb, v => { if(tapeProc) tapeProc.setToReverb(v); document.getElementById('fxv-trvb').textContent=Math.round(v*100)+'%'; });
+      makeSlider(document.getElementById('feq-tlo'), -12, 12, FX.tape.eq.lo,   v => { FX.tape.eq.lo=v;   if(tapeProc) tapeProc.setEQ('lo',v);   document.getElementById('fev-tlo').textContent=(v>=0?'+':'')+v.toFixed(1)+'dB'; }, true);
+      makeSlider(document.getElementById('feq-tlm'), -12, 12, FX.tape.eq.lmid, v => { FX.tape.eq.lmid=v; if(tapeProc) tapeProc.setEQ('lmid',v); document.getElementById('fev-tlm').textContent=(v>=0?'+':'')+v.toFixed(1)+'dB'; }, true);
+      makeSlider(document.getElementById('feq-thm'), -12, 12, FX.tape.eq.hmid, v => { FX.tape.eq.hmid=v; if(tapeProc) tapeProc.setEQ('hmid',v); document.getElementById('fev-thm').textContent=(v>=0?'+':'')+v.toFixed(1)+'dB'; }, true);
+      makeSlider(document.getElementById('feq-thi'), -12, 12, FX.tape.eq.hi,   v => { FX.tape.eq.hi=v;   if(tapeProc) tapeProc.setEQ('hi',v);   document.getElementById('fev-thi').textContent=(v>=0?'+':'')+v.toFixed(1)+'dB'; }, true);
     });
   } else if (type === 'spring') {
     sec.innerHTML = '<div class="dsec-title">SPRING REVERB PARAMETERS</div>'
@@ -849,12 +888,24 @@ function buildFXPanel(type) {
       + '<div class="drow"><span class="dlbl">TENSION</span><div class="cslider" id="fxp-sten"><div class="cslider-track"></div><div class="cslider-fill spring"></div><div class="cslider-thumb"></div></div><span class="dval" id="fxv-sten">'+Math.round(FX.spring.tension*100)+'%</span></div>'
       + '<div class="drow"><span class="dlbl">PRE-DELAY</span><div class="cslider" id="fxp-spre"><div class="cslider-track"></div><div class="cslider-fill spring"></div><div class="cslider-thumb"></div></div><span class="dval" id="fxv-spre">'+Math.round(FX.spring.predelay*1000)+'ms</span></div>';
     inner.appendChild(sec);
+    const eqsec2 = document.createElement('div'); eqsec2.className='dsec';
+    eqsec2.innerHTML = '<div class="dsec-title">RETURN EQ</div><div class="eq-grid">'
+      + '<div class="eq-band"><div class="eq-top"><span class="eq-lbl">LO 120Hz</span><span class="eq-val" id="fev-slo">'+(FX.spring.eq.lo>=0?'+':'')+FX.spring.eq.lo.toFixed(1)+'dB</span></div><div class="cslider" id="feq-slo"><div class="cslider-track"></div><div class="cslider-fill spring"></div><div class="cslider-thumb round"></div></div></div>'
+      + '<div class="eq-band"><div class="eq-top"><span class="eq-lbl">LO-MID 500Hz</span><span class="eq-val" id="fev-slm">'+(FX.spring.eq.lmid>=0?'+':'')+FX.spring.eq.lmid.toFixed(1)+'dB</span></div><div class="cslider" id="feq-slm"><div class="cslider-track"></div><div class="cslider-fill spring"></div><div class="cslider-thumb round"></div></div></div>'
+      + '<div class="eq-band"><div class="eq-top"><span class="eq-lbl">HI-MID 3kHz</span><span class="eq-val" id="fev-shm">'+(FX.spring.eq.hmid>=0?'+':'')+FX.spring.eq.hmid.toFixed(1)+'dB</span></div><div class="cslider" id="feq-shm"><div class="cslider-track"></div><div class="cslider-fill spring"></div><div class="cslider-thumb round"></div></div></div>'
+      + '<div class="eq-band"><div class="eq-top"><span class="eq-lbl">HI 10kHz</span><span class="eq-val" id="fev-shi">'+(FX.spring.eq.hi>=0?'+':'')+FX.spring.eq.hi.toFixed(1)+'dB</span></div><div class="cslider" id="feq-shi"><div class="cslider-track"></div><div class="cslider-fill spring"></div><div class="cslider-thumb round"></div></div></div>'
+      + '</div>';
+    inner.appendChild(eqsec2);
     requestAnimationFrame(() => {
       makeSlider(document.getElementById('fxp-dec'),  0, 0.99, FX.spring.decay,     v => { FX.spring.decay=v;      if(springProc) springProc.setDecay(v);     document.getElementById('fxv-dec').textContent=Math.round(v*100)+'%'; });
       makeSlider(document.getElementById('fxp-ston'), 0, 1,    FX.spring.tone,      v => { FX.spring.tone=v;       if(springProc) springProc.setTone(v);      document.getElementById('fxv-ston').textContent=Math.round(v*100)+'%'; });
       makeSlider(document.getElementById('fxp-sdif'), 0, 1,    FX.spring.diffusion, v => { FX.spring.diffusion=v;  if(springProc) springProc.setDiffusion(v); document.getElementById('fxv-sdif').textContent=Math.round(v*100)+'%'; });
       makeSlider(document.getElementById('fxp-sten'), 0, 1,    FX.spring.tension,   v => { FX.spring.tension=v;    if(springProc) springProc.setTension(v);   document.getElementById('fxv-sten').textContent=Math.round(v*100)+'%'; });
       makeSlider(document.getElementById('fxp-spre'), 0, 0.1,  FX.spring.predelay,  v => { FX.spring.predelay=v;   if(springProc) springProc.setPreDelay(v);  document.getElementById('fxv-spre').textContent=Math.round(v*1000)+'ms'; });
+      makeSlider(document.getElementById('feq-slo'), -12, 12, FX.spring.eq.lo,   v => { FX.spring.eq.lo=v;   if(springProc) springProc.setEQ('lo',v);   document.getElementById('fev-slo').textContent=(v>=0?'+':'')+v.toFixed(1)+'dB'; }, true);
+      makeSlider(document.getElementById('feq-slm'), -12, 12, FX.spring.eq.lmid, v => { FX.spring.eq.lmid=v; if(springProc) springProc.setEQ('lmid',v); document.getElementById('fev-slm').textContent=(v>=0?'+':'')+v.toFixed(1)+'dB'; }, true);
+      makeSlider(document.getElementById('feq-shm'), -12, 12, FX.spring.eq.hmid, v => { FX.spring.eq.hmid=v; if(springProc) springProc.setEQ('hmid',v); document.getElementById('fev-shm').textContent=(v>=0?'+':'')+v.toFixed(1)+'dB'; }, true);
+      makeSlider(document.getElementById('feq-shi'), -12, 12, FX.spring.eq.hi,   v => { FX.spring.eq.hi=v;   if(springProc) springProc.setEQ('hi',v);   document.getElementById('fev-shi').textContent=(v>=0?'+':'')+v.toFixed(1)+'dB'; }, true);
     });
   } else {
     sec.innerHTML = '<div class="dsec-title">PLATE REVERB PARAMETERS</div>'
@@ -863,11 +914,23 @@ function buildFXPanel(type) {
       + '<div class="drow"><span class="dlbl">DAMPING</span><div class="cslider" id="fxp-pdmp"><div class="cslider-track"></div><div class="cslider-fill plate"></div><div class="cslider-thumb"></div></div><span class="dval" id="fxv-pdmp">'+Math.round(FX.plate.damp*100)+'%</span></div>'
       + '<div class="drow"><span class="dlbl">PRE-DELAY</span><div class="cslider" id="fxp-ppre"><div class="cslider-track"></div><div class="cslider-fill plate"></div><div class="cslider-thumb"></div></div><span class="dval" id="fxv-ppre">'+Math.round(FX.plate.predelay*1000)+'ms</span></div>';
     inner.appendChild(sec);
+    const eqsec3 = document.createElement('div'); eqsec3.className='dsec';
+    eqsec3.innerHTML = '<div class="dsec-title">RETURN EQ</div><div class="eq-grid">'
+      + '<div class="eq-band"><div class="eq-top"><span class="eq-lbl">LO 120Hz</span><span class="eq-val" id="fev-plo">'+(FX.plate.eq.lo>=0?'+':'')+FX.plate.eq.lo.toFixed(1)+'dB</span></div><div class="cslider" id="feq-plo"><div class="cslider-track"></div><div class="cslider-fill plate"></div><div class="cslider-thumb round"></div></div></div>'
+      + '<div class="eq-band"><div class="eq-top"><span class="eq-lbl">LO-MID 500Hz</span><span class="eq-val" id="fev-plm">'+(FX.plate.eq.lmid>=0?'+':'')+FX.plate.eq.lmid.toFixed(1)+'dB</span></div><div class="cslider" id="feq-plm"><div class="cslider-track"></div><div class="cslider-fill plate"></div><div class="cslider-thumb round"></div></div></div>'
+      + '<div class="eq-band"><div class="eq-top"><span class="eq-lbl">HI-MID 3kHz</span><span class="eq-val" id="fev-phm">'+(FX.plate.eq.hmid>=0?'+':'')+FX.plate.eq.hmid.toFixed(1)+'dB</span></div><div class="cslider" id="feq-phm"><div class="cslider-track"></div><div class="cslider-fill plate"></div><div class="cslider-thumb round"></div></div></div>'
+      + '<div class="eq-band"><div class="eq-top"><span class="eq-lbl">HI 10kHz</span><span class="eq-val" id="fev-phi">'+(FX.plate.eq.hi>=0?'+':'')+FX.plate.eq.hi.toFixed(1)+'dB</span></div><div class="cslider" id="feq-phi"><div class="cslider-track"></div><div class="cslider-fill plate"></div><div class="cslider-thumb round"></div></div></div>'
+      + '</div>';
+    inner.appendChild(eqsec3);
     requestAnimationFrame(() => {
       makeSlider(document.getElementById('fxp-psz'),  0, 1,   FX.plate.size,      v=>{FX.plate.size=v;      if(plateProc) plateProc.setSize(v);      document.getElementById('fxv-psz').textContent=Math.round(v*100)+'%';});
       makeSlider(document.getElementById('fxp-pdec'), 0, 0.99,FX.plate.decay,     v=>{FX.plate.decay=v;     if(plateProc) plateProc.setDecay(v);     document.getElementById('fxv-pdec').textContent=Math.round(v*100)+'%';});
       makeSlider(document.getElementById('fxp-pdmp'), 0, 1,   FX.plate.damp,      v=>{FX.plate.damp=v;      if(plateProc) plateProc.setDamp(v);      document.getElementById('fxv-pdmp').textContent=Math.round(v*100)+'%';});
       makeSlider(document.getElementById('fxp-ppre'), 0, 0.1, FX.plate.predelay,  v=>{FX.plate.predelay=v;  if(plateProc) plateProc.setPreDelay(v);  document.getElementById('fxv-ppre').textContent=Math.round(v*1000)+'ms';});
+      makeSlider(document.getElementById('feq-plo'), -12, 12, FX.plate.eq.lo,   v => { FX.plate.eq.lo=v;   if(plateProc) plateProc.setEQ('lo',v);   document.getElementById('fev-plo').textContent=(v>=0?'+':'')+v.toFixed(1)+'dB'; }, true);
+      makeSlider(document.getElementById('feq-plm'), -12, 12, FX.plate.eq.lmid, v => { FX.plate.eq.lmid=v; if(plateProc) plateProc.setEQ('lmid',v); document.getElementById('fev-plm').textContent=(v>=0?'+':'')+v.toFixed(1)+'dB'; }, true);
+      makeSlider(document.getElementById('feq-phm'), -12, 12, FX.plate.eq.hmid, v => { FX.plate.eq.hmid=v; if(plateProc) plateProc.setEQ('hmid',v); document.getElementById('fev-phm').textContent=(v>=0?'+':'')+v.toFixed(1)+'dB'; }, true);
+      makeSlider(document.getElementById('feq-phi'), -12, 12, FX.plate.eq.hi,   v => { FX.plate.eq.hi=v;   if(plateProc) plateProc.setEQ('hi',v);   document.getElementById('fev-phi').textContent=(v>=0?'+':'')+v.toFixed(1)+'dB'; }, true);
     });
   }
   initFXScroll();
@@ -955,17 +1018,33 @@ function bufferToWav(buffer) {
 // ═══════════════════════════════════════════════════════════════
 //  SAVE / LOAD
 // ═══════════════════════════════════════════════════════════════
-function saveProject() {
+function bufToB64(buf) {
+  const wav = bufferToWav(buf);
+  return new Promise(res => {
+    const r = new FileReader();
+    r.onload = () => res(r.result.split(',')[1]);
+    r.readAsDataURL(wav);
+  });
+}
+
+async function saveProject() {
   const name = prompt('Имя проекта:', projectName);
   if (!name) return;
   projectName = name.replace(/[^\w\-]/g,'_');
-  const data = {version:4, name:projectName,
+  const data = {version:5, name:projectName,
     gn:G.noise, gw:G.wow, gd:G.degrade, gb:G.bw,
     fx:FX,
-    tracks:T.map(t=>({i:t.i,vol:t.vol,ig:t.inputGain,pan:t.pan,mute:t.mute,solo:t.solo,loop:t.loop,
-      speed:t.speed,noise:t.noise,wow:t.wow,degrade:t.degrade,bw:t.bw,eq:t.eq,sends:t.sends,name:t.name}))
+    tracks:[]
   };
-  const b64 = btoa(unescape(encodeURIComponent(JSON.stringify(data,null,2))));
+  for (const t of T) {
+    const td = {i:t.i,vol:t.vol,ig:t.inputGain,pan:t.pan,mute:t.mute,solo:t.solo,loop:t.loop,
+      speed:t.speed,noise:t.noise,wow:t.wow,degrade:t.degrade,bw:t.bw,eq:t.eq,sends:t.sends,name:t.name,audio:null};
+    if (t.buf) {
+      try { td.audio = await bufToB64(t.buf); } catch(e) { console.warn('Audio encode error:', e); }
+    }
+    data.tracks.push(td);
+  }
+  const b64 = btoa(unescape(encodeURIComponent(JSON.stringify(data))));
   saveToDevice(b64,'Projects',projectName+'.json').then(r=>{
     if(r.startsWith('OK:')) alert('✓ Download/TapeLooper/Projects/'+projectName+'.json');
     else alert('Ошибка: '+r);
@@ -984,24 +1063,44 @@ function loadProject() {
       if(data.gd!==undefined){G.degrade=data.gd;gSliders.degrade.setValue(G.degrade);document.getElementById('vd').textContent=Math.round(G.degrade*100)+'%';}
       if(data.gb!==undefined){G.bw=data.gb;gSliders.bw.setValue(G.bw);document.getElementById('vb').textContent=Math.round(G.bw*100)+'%';}
       if(data.fx){
-        Object.assign(FX.tape, data.fx.tape||{}); Object.assign(FX.spring, data.fx.spring||{}); Object.assign(FX.plate, data.fx.plate||{});
-        if(tapeProc){tapeProc.setTime(FX.tape.time);tapeProc.setFeedback(FX.tape.feedback);tapeProc.setTone(FX.tape.tone);tapeProc.setWow(FX.tape.wow);}
-        if(springProc){springProc.setDecay(FX.spring.decay);springProc.setTone(FX.spring.tone);springProc.setDiffusion(FX.spring.diffusion);springProc.setTension(FX.spring.tension);springProc.setPreDelay(FX.spring.predelay);}
-        if(plateProc){plateProc.setSize(FX.plate.size);plateProc.setDecay(FX.plate.decay);plateProc.setDamp(FX.plate.damp);plateProc.setPreDelay(FX.plate.predelay);}
+        if(data.fx.tape)   Object.assign(FX.tape,   data.fx.tape);
+        if(data.fx.spring) Object.assign(FX.spring, data.fx.spring);
+        if(data.fx.plate)  Object.assign(FX.plate,  data.fx.plate);
+        if(tapeProc){tapeProc.setTime(FX.tape.time);tapeProc.setFeedback(FX.tape.feedback);tapeProc.setTone(FX.tape.tone);tapeProc.setWow(FX.tape.wow);tapeProc.setToReverb(FX.tape.toRvb);
+          if(FX.tape.eq) ['lo','lmid','hmid','hi'].forEach(b=>tapeProc.setEQ(b,FX.tape.eq[b]||0));}
+        if(springProc){springProc.setDecay(FX.spring.decay);springProc.setTone(FX.spring.tone);springProc.setDiffusion(FX.spring.diffusion);springProc.setTension(FX.spring.tension);springProc.setPreDelay(FX.spring.predelay);
+          if(FX.spring.eq) ['lo','lmid','hmid','hi'].forEach(b=>springProc.setEQ(b,FX.spring.eq[b]||0));}
+        if(plateProc){plateProc.setSize(FX.plate.size);plateProc.setDecay(FX.plate.decay);plateProc.setDamp(FX.plate.damp);plateProc.setPreDelay(FX.plate.predelay);
+          if(FX.plate.eq) ['lo','lmid','hmid','hi'].forEach(b=>plateProc.setEQ(b,FX.plate.eq[b]||0));}
       }
-      if(data.tracks) data.tracks.forEach(td=>{
-        const t=T[td.i];
-        Object.assign(t,{vol:td.vol,inputGain:td.ig,pan:td.pan||0,mute:td.mute,solo:td.solo,loop:td.loop,
-          speed:td.speed,noise:td.noise,wow:td.wow,degrade:td.degrade||0,bw:td.bw,eq:td.eq,sends:td.sends||{tape:0,spring:0,plate:0},name:td.name});
-        renderCard(t);
-        if(t.chain){
-          t.chain.setVol(t.vol); t.chain.setInputGain(t.inputGain); t.chain.setPan(t.pan);
-          t.chain.setNoise(t.noise); t.chain.setWow(t.wow); t.chain.setDegrade(t.degrade); t.chain.setBW(t.bw);
-          ['lo','lmid','hmid','hi'].forEach(b=>t.chain.setEQ(b,t.eq[b]));
-          ['tape','spring','plate'].forEach(fx=>t.chain.setSend(fx,t.sends[fx]));
+      if(data.tracks) {
+        for (const td of data.tracks) {
+          const t=T[td.i];
+          Object.assign(t,{vol:td.vol,inputGain:td.ig,pan:td.pan||0,mute:td.mute,solo:td.solo,loop:td.loop,
+            speed:td.speed,noise:td.noise,wow:td.wow,degrade:td.degrade||0,bw:td.bw,
+            eq:td.eq||{lo:0,lmid:0,hmid:0,hi:0},
+            sends:td.sends||{tape:0,spring:0,plate:0},name:td.name});
+          // Restore audio buffer from base64
+          if(td.audio) {
+            try {
+              ctx();
+              const bin = atob(td.audio);
+              const ab = new ArrayBuffer(bin.length);
+              const view = new Uint8Array(ab);
+              for(let i=0;i<bin.length;i++) view[i]=bin.charCodeAt(i);
+              t.buf = await actx.decodeAudioData(ab);
+            } catch(e) { console.warn('Audio decode error track '+td.i, e); }
+          }
+          renderCard(t);
+          if(t.chain){
+            t.chain.setVol(t.vol); t.chain.setInputGain(t.inputGain); t.chain.setPan(t.pan);
+            t.chain.setNoise(t.noise); t.chain.setWow(t.wow); t.chain.setDegrade(t.degrade); t.chain.setBW(t.bw);
+            ['lo','lmid','hmid','hi'].forEach(b=>t.chain.setEQ(b,t.eq[b]));
+            ['tape','spring','plate'].forEach(fx=>t.chain.setSend(fx,t.sends[fx]));
+          }
         }
-      });
-      applyGlobalTape(); alert('✓ Загружен: '+projectName);
+      }
+      applyGlobalTape(); dots(); alert('✓ Загружен: '+projectName);
     } catch(e){alert('Ошибка: '+e.message);}
   }; inp.click();
 }
@@ -1275,6 +1374,7 @@ document.getElementById('btn-bounce').addEventListener('click',showBounce);
 document.getElementById('tv-back').addEventListener('click',closeDetail);
 
 dots();
+
 
 
 </script>
